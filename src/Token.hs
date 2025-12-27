@@ -56,5 +56,10 @@ data LexerState = LexerState
     currentPosition :: Position
   }
 
-nextToken :: LexerState -> Either LexError (Token, LexerState)
+nextToken :: Lexer a -> LexerState -> Either LexError (Token, LexerState)
 nextToken = undefined
+
+newtype Lexer a = Lexer
+  {runLexer :: LexerState -> Either LexError (a, LexerState)}
+
+-- the final Lexer will be some kind Lexer [Token]
