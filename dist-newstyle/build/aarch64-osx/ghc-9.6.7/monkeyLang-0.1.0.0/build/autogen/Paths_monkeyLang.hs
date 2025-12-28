@@ -46,12 +46,12 @@ getBinDir, getLibDir, getDynLibDir, getDataDir, getLibexecDir, getSysconfDir :: 
 
 
 bindir, libdir, dynlibdir, datadir, libexecdir, sysconfdir :: FilePath
-bindir     = "/home/dnf/.cabal/bin"
-libdir     = "/home/dnf/.cabal/lib/x86_64-linux-ghc-9.6.7/monkeyLang-0.1.0.0-inplace"
-dynlibdir  = "/home/dnf/.cabal/lib/x86_64-linux-ghc-9.6.7"
-datadir    = "/home/dnf/.cabal/share/x86_64-linux-ghc-9.6.7/monkeyLang-0.1.0.0"
-libexecdir = "/home/dnf/.cabal/libexec/x86_64-linux-ghc-9.6.7/monkeyLang-0.1.0.0"
-sysconfdir = "/home/dnf/.cabal/etc"
+bindir     = "/Users/dnf/.cabal/bin"
+libdir     = "/Users/dnf/.cabal/lib/aarch64-osx-ghc-9.6.7/monkeyLang-0.1.0.0-inplace"
+dynlibdir  = "/Users/dnf/.cabal/lib/aarch64-osx-ghc-9.6.7"
+datadir    = "/Users/dnf/.cabal/share/aarch64-osx-ghc-9.6.7/monkeyLang-0.1.0.0"
+libexecdir = "/Users/dnf/.cabal/libexec/aarch64-osx-ghc-9.6.7/monkeyLang-0.1.0.0"
+sysconfdir = "/Users/dnf/.cabal/etc"
 
 getBinDir     = catchIO (getEnv "monkeyLang_bindir")     (\_ -> return bindir)
 getLibDir     = catchIO (getEnv "monkeyLang_libdir")     (\_ -> return libdir)
