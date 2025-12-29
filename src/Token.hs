@@ -1,12 +1,14 @@
 module Token where
 
 import           Control.Applicative (Alternative (..))
+import           Data.Char           (isAlpha, isAlphaNum, isDigit)
+import           Data.List.NonEmpty  (cons)
 import           Data.Traversable    ()
 
 data TokenType = Illegal
                | EOF
                | Identifier String
-               | IntLiteral Int
+               | IntLiteral String
                | StringLiteral String
                | Assign
                | Plus
@@ -108,15 +110,6 @@ instance Alternative Lexer where
 
 --  A basic char lexer
 --
-emptyLexer :: Lexer a
-emptyLexer = Lexer $ \state -> Left (newLexError "empty Parser failed to parse" (currentPosition state))
-
-anyNonWhitespaceLexer :: Lexer Char
-anyNonWhitespaceLexer = satisfy (`notElem` ['\n', '\r', '\t', ' '])
-
-
-charL :: Char -> Lexer Char
-charL s = satisfy (== s)
 
 satisfy :: (Char -> Bool) -> Lexer Char
 satisfy cb = Lexer $ \state ->
@@ -145,14 +138,42 @@ advancePosition c pos = case c of
   where
     tabWidth = 4 -- configurable
 
+charL :: Char -> Lexer Char
+charL s = satisfy (== s)
 nl :: Lexer Char
 ws :: Lexer Char
 cr :: Lexer Char
 tab :: Lexer Char
+emptyLexer :: Lexer a
+anyNonWhitespaceLexer :: Lexer Char
+
+anyNonWhitespaceLexer = satisfy (`notElem` ['\n', '\r', '\t', ' '])
+emptyLexer = Lexer $ \state -> Left (newLexError "empty Parser failed to parse" (currentPosition state))
 nl = charL '\n'
-
 ws = charL ' '
-
 cr = charL '\r'
-
 tab = charL '\t'
+
+
+intL :: Lexer String
+intL = oneOrMore (satisfy isDigit)
+
+--newType IntegerPart    = String
+--newType FractionalPart = String
+--newType Exponent       = Bool
+--newType ExponentSign   = Bool
+--newType ExponentPart   = String
+
+number :: Lexer(Char, Maybe String, Maybe Char, Maybe Char,Maybe String)
+number = (,,,,) <$>charL '.'<*> intL <*> charL 'e' <*> satisfy (\x-> x=='-' || x == '+') <*> intL
+
+optional :: Lexer a -> Lexer (Maybe a)
+optional la = (Just <$> la) <|> pure Nothing
+
+ident :: Lexer String
+ident = (++) <$> oneOrMore (satisfy isAlpha) <*> zeroOrMore (satisfy (\c -> isAlphaNum c || c == '_' || c == '$'))
+
+
+string :: Lexer String
+string = charL '"' *> zeroOrMore (satisfy ( `notElem` ['"'])) <* charL '"'
+
