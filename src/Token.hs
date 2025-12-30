@@ -1,41 +1,45 @@
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+{-# HLINT ignore "Redundant bracket" #-}
 module Token where
 
 import           Control.Applicative (Alternative (..))
 import           Data.Char           (isAlpha, isAlphaNum, isDigit)
-import           Data.List.NonEmpty  (cons)
 import           Data.Traversable    ()
 
+-- Core types
 data TokenType = Illegal
                | EOF
                | Identifier String
-               | IntLiteral String
+               | IntLiteral IntegerPart
+               | FloatLiteral IntegerPart (Maybe FractionalPart) (Maybe ExponentPart)
                | StringLiteral String
-               | Assign
-               | Plus
-               | Minus
-               | Bang
-               | Asterisk
-               | Slash
-               | Equal
-               | NotEqual
-               | LessThan
-               | GreaterThan
-               | Comma
-               | Semicolon
-               | Colon
-               | LeftParen
-               | RightParen
-               | LeftBrace
-               | RightBrace
-               | LeftBracket
-               | RightBracket
-               | Function
-               | Let
-               | TrueLit
-               | FalseLit
-               | If
-               | Else
-               | Return
+               | Assign Char
+               | Plus Char
+               | Minus Char
+               | Bang Char
+               | Asterisk Char
+               | Slash Char
+               | Equal String
+               | NotEqual String
+               | LessThan Char
+               | GreaterThan Char
+               | Comma Char
+               | Semicolon Char
+               | Colon Char
+               | LParen Char
+               | RParen Char
+               | LBrace Char
+               | RBrace Char
+               | LBracket Char
+               | RBracket Char
+               | Function String
+               | Let String
+               | TrueLit String
+               | FalseLit String
+               | If String
+               | Else String
+               | Return String
+               | Escaped Char
   deriving (Eq, Show)
 
 data Token = Token
@@ -44,12 +48,26 @@ data Token = Token
                }
   deriving (Eq, Show)
 
+
+
+data Number = IntNum IntegerPart
+            | FloatNum IntegerPart (Maybe FractionalPart) (Maybe ExponentPart)
+  deriving (Eq, Show)
+
+newtype IntegerPart = IntegerPart String
+  deriving (Eq, Show)
+newtype FractionalPart = FractionalPart String
+  deriving (Eq, Show)
+data ExponentPart = ExponentPart (Maybe Char) String
+  deriving (Eq, Show)
+
 data Position = Position
                   { line   :: Int
                   , column :: Int
                   }
   deriving (Eq, Show)
 
+-- Lexer State & Error Types
 data LexError = LexError
                   { errorMsg      :: String
                   , errorPosition :: Position
@@ -65,13 +83,12 @@ data LexerState = LexerState
 newLexError :: String -> Position -> LexError
 newLexError m p = LexError {errorMsg = m, errorPosition = p}
 
-nextToken :: Lexer a -> LexerState -> Either LexError (Token, LexerState)
-nextToken = undefined
+
+
+-- Lexer Monad Definition
 
 newtype Lexer a = Lexer { runLexer :: LexerState -> Either LexError (a, LexerState) }
 
-------------------
--- The laws our Lexer follows
 instance Functor Lexer where
   fmap :: (a -> b) -> Lexer a -> Lexer b
   fmap f la = Lexer $ \state -> case runLexer la state of
@@ -108,8 +125,7 @@ instance Alternative Lexer where
     Left _      -> runLexer la2 state
     Right lexed -> Right lexed
 
---  A basic char lexer
---
+-- Basic Combinators
 
 satisfy :: (Char -> Bool) -> Lexer Char
 satisfy cb = Lexer $ \state ->
@@ -123,11 +139,46 @@ satisfy cb = Lexer $ \state ->
     [] ->
       Left $ newLexError "Failed to lexer: input was empty" (currentPosition state)
 
+
+charL :: Char -> Lexer Char
+charL s = satisfy (== s)
+
 oneOrMore :: Lexer a -> Lexer [a]
 oneOrMore la = (:) <$> la <*> zeroOrMore la
 
 zeroOrMore :: Lexer a -> Lexer [a]
 zeroOrMore la = oneOrMore la <|> pure []
+
+
+optional :: Lexer a -> Lexer (Maybe a)
+optional la = Just <$> la <|> pure Nothing
+
+choice :: [Lexer a] -> Lexer a
+choice = foldr (\b a ->  a<|> (b)) emptyLexer
+
+
+-- whitespace and control characters
+nl :: Lexer Char
+ws :: Lexer Char
+cr :: Lexer Char
+tab :: Lexer Char
+
+nl = charL '\n'
+ws = charL ' '
+cr = charL '\r'
+tab = charL '\t'
+
+
+escapedLexer :: Lexer TokenType
+escapedLexer = choice (map (fmap Escaped) [nl,ws,cr,tab])
+
+
+emptyLexer :: Lexer a
+anyNonWhitespaceLexer :: Lexer Char
+anyNonWhitespaceLexer = satisfy (`notElem` ['\n', '\r', '\t', ' '])
+emptyLexer = Lexer $ \state -> Left (newLexError "empty Parser failed to parse" (currentPosition state))
+
+-- Position Tracking
 
 advancePosition :: Char -> Position -> Position
 advancePosition c pos = case c of
@@ -138,42 +189,149 @@ advancePosition c pos = case c of
   where
     tabWidth = 4 -- configurable
 
-charL :: Char -> Lexer Char
-charL s = satisfy (== s)
-nl :: Lexer Char
-ws :: Lexer Char
-cr :: Lexer Char
-tab :: Lexer Char
-emptyLexer :: Lexer a
-anyNonWhitespaceLexer :: Lexer Char
-
-anyNonWhitespaceLexer = satisfy (`notElem` ['\n', '\r', '\t', ' '])
-emptyLexer = Lexer $ \state -> Left (newLexError "empty Parser failed to parse" (currentPosition state))
-nl = charL '\n'
-ws = charL ' '
-cr = charL '\r'
-tab = charL '\t'
+withPosition :: Lexer TokenType -> Lexer Token
+withPosition lexer = Lexer $ \state ->
+    let pos = currentPosition state
+    in case runLexer lexer state of
+        Right (tokenType, newState) -> Right (Token tokenType pos, newState)
+        Left err                    -> Left err
 
 
+-- Number Lexers
 intL :: Lexer String
 intL = oneOrMore (satisfy isDigit)
 
---newType IntegerPart    = String
---newType FractionalPart = String
---newType Exponent       = Bool
---newType ExponentSign   = Bool
---newType ExponentPart   = String
 
-number :: Lexer(Char, Maybe String, Maybe Char, Maybe Char,Maybe String)
-number = (,,,,) <$>charL '.'<*> intL <*> charL 'e' <*> satisfy (\x-> x=='-' || x == '+') <*> intL
+lexInt :: Lexer IntegerPart
+lexInt = IntegerPart <$>oneOrMore (satisfy isDigit)
 
-optional :: Lexer a -> Lexer (Maybe a)
-optional la = (Just <$> la) <|> pure Nothing
+lexFractionalPart:: Lexer FractionalPart
+lexFractionalPart =  FractionalPart<$>(charL '.' *> intL)
+
+lexExponentPart :: Lexer ExponentPart
+lexExponentPart =(charL 'e' <|> charL 'E') *>
+                  (ExponentPart <$> optional (satisfy (`elem` ['+', '-']))
+                       <*> intL)
+
+numberL :: Lexer Number
+numberL = do
+          intPart <- lexInt
+          maybeFrac <- optional lexFractionalPart
+          maybeExp <- optional lexExponentPart
+
+          pure $ case (maybeFrac, maybeExp) of
+            (Nothing, Nothing) -> IntNum intPart
+            _                  -> FloatNum intPart maybeFrac maybeExp
+
+
+numberLexer :: Lexer TokenType
+numberLexer = Lexer $ \state ->
+    case runLexer numberL state of
+        Right (x, xs) ->
+            case x of
+                IntNum info -> Right (IntLiteral info, xs)
+                FloatNum intInfo maybeFrac maybeExponent -> Right (FloatLiteral intInfo maybeFrac maybeExponent, xs)
+        Left err -> Left err
+
+safeNumberLexer ::Lexer TokenType
+safeNumberLexer = Lexer $ \state -> do
+                                    (parsedNumber,newState) <- runLexer numberLexer state
+
+                                    case getInput newState of
+                                      (x:_) | isAlpha x || x == '_' || x == '$' ->
+                                            Left (newLexError "illegal numeric literal" (currentPosition newState))
+                                            | otherwise ->
+                                              Right(parsedNumber,newState)
+                                      [] -> Right(parsedNumber,newState)
+
+
+
+-- String Lexers
+stringL :: Lexer String
+stringL = charL '"' *> zeroOrMore (satisfy ( `notElem` ['"'])) <* charL '"'
+
+
+stringLexer:: Lexer TokenType
+stringLexer = StringLiteral <$> stringL
+
+-- Identifier & Keyword Lexers
 
 ident :: Lexer String
 ident = (++) <$> oneOrMore (satisfy isAlpha) <*> zeroOrMore (satisfy (\c -> isAlphaNum c || c == '_' || c == '$'))
 
+keywords :: [(String, String -> TokenType)]
+keywords =
+    [ ("fn", Function)
+    , ("let", Let)
+    , ("true", TrueLit)
+    , ("false", FalseLit)
+    , ("if", If)
+    , ("else", Else)
+    , ("return", Return)
+    ]
 
-string :: Lexer String
-string = charL '"' *> zeroOrMore (satisfy ( `notElem` ['"'])) <* charL '"'
+
+lookupIdent :: String -> TokenType
+lookupIdent identifier = case lookup identifier keywords of
+                        Just constructor -> constructor identifier
+                        Nothing          -> Identifier identifier
+
+identifiderAndKeywordsLexer :: Lexer TokenType
+identifiderAndKeywordsLexer = lookupIdent <$>ident
+
+-- Symbol Lexers
+
+specialSymbols :: [(Char, Char -> TokenType)]
+specialSymbols = [('(', LParen),(')', RParen),('[', LBracket), (']', RBracket), ('}',RBrace),('{',LBrace),  (';', Semicolon), (':', Colon), (',', Comma),('-', Minus), ('+', Plus),('*',Asterisk),('<',LessThan),('>',GreaterThan), ('/',Slash)]
+
+symbolMap :: [Char]
+symbolMap = map fst specialSymbols
+
+symbolToLexer :: (Char, Char -> TokenType) -> Lexer TokenType
+symbolToLexer (s, tokenType) = tokenType  <$> charL s
+
+specialSymbolsLexer :: Lexer TokenType
+specialSymbolsLexer = choice (map symbolToLexer specialSymbols)
+
+twoCharSymbols :: [((Char, Char -> TokenType), (String, String -> TokenType))]
+twoCharSymbols = [(('!', Bang), ("!=",NotEqual)), (('=',Assign),("==",Equal))]
+
+twoCharSymbolToLexer :: (Char, Char -> TokenType) -> (String, String -> TokenType) -> Lexer TokenType
+twoCharSymbolToLexer (c, singleToken) (s, doubleToken) =  doubleToken <$> traverse charL s <|> singleToken <$> charL c
+
+specialDoubleCharSymbolsLexer :: Lexer TokenType
+specialDoubleCharSymbolsLexer = choice (map (uncurry twoCharSymbolToLexer) twoCharSymbols)
+
+-- Main Token Lexer
+
+tokenLexer :: Lexer Token
+tokenLexer = withPosition $ Lexer $ \state ->
+  case getInput state of
+    [] -> Left (newLexError "Unexpected end of input" (currentPosition state))
+    c:cs
+      | c == '"'          -> runLexer stringLexer state
+      | c == '!'          -> runLexer specialDoubleCharSymbolsLexer state  -- handles !=, !
+      | c == '='          -> runLexer specialDoubleCharSymbolsLexer state  -- handles ==, =
+      | c `elem` symbolMap -> runLexer specialSymbolsLexer state
+      | isDigit c         -> runLexer safeNumberLexer state
+      | isAlpha c || c == '_' || c == '$' -> runLexer identifiderAndKeywordsLexer state
+      | c `elem` ['\n', '\t', '\n', '\r', ' ']-> runLexer (Escaped <$> (nl <|> ws <|> cr <|> tab)) state
+      | otherwise         -> Left (newLexError ("Unexpected character: " ++ show c) (currentPosition state))
+
+-- Entry Points
+
+tokenizer :: LexerState -> Either LexError [Token]
+tokenizer state =
+    if null (getInput state) then
+        return []
+    else do
+        result <- runLexer tokenLexer state
+        case result of
+            (token, newState) -> do
+                restTokens <- tokenizer newState
+                return (token : restTokens)
+
+-- Helper
+toTokenType:: Either LexError [Token]  -> Either LexError [TokenType]
+toTokenType = fmap (map (tokenType))
 
