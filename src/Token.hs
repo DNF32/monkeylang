@@ -304,8 +304,8 @@ specialDoubleCharSymbolsLexer = choice (map (uncurry twoCharSymbolToLexer) twoCh
 
 -- Main Token Lexer
 
-tokenLexer :: Lexer Token
-tokenLexer = withPosition $ Lexer $ \state ->
+tokenizer :: Lexer Token
+tokenizer = withPosition $ Lexer $ \state ->
   case getInput state of
     [] -> Left (newLexError "Unexpected end of input" (currentPosition state))
     c:cs
@@ -319,19 +319,23 @@ tokenLexer = withPosition $ Lexer $ \state ->
       | otherwise         -> Left (newLexError ("Unexpected character: " ++ show c) (currentPosition state))
 
 -- Entry Points
+--
+nextToken :: LexerState -> Either LexError (Token, LexerState)
+nextToken = runLexer tokenizer
 
-tokenizer :: LexerState -> Either LexError [Token]
-tokenizer state =
+tokenizerAll :: LexerState -> Either LexError [Token]
+tokenizerAll state =
     if null (getInput state) then
         return []
     else do
-        result <- runLexer tokenLexer state
+        result <- runLexer tokenizer state
         case result of
             (token, newState) -> do
-                restTokens <- tokenizer newState
+                restTokens <- tokenizerAll newState
                 return (token : restTokens)
 
 -- Helper
 toTokenType:: Either LexError [Token]  -> Either LexError [TokenType]
 toTokenType = fmap (map (tokenType))
+
 
