@@ -1,4 +1,12 @@
-module MyLib (someFunc) where
+{-# LANGUAGE DuplicateRecordFields #-}
 
-someFunc :: IO ()
-someFunc = putStrLn "someFunc"
+module MyLib
+  ( module Ast,
+    module Parser,
+    module Token,
+  )
+where
+
+import Ast
+import Parser
+import Token
