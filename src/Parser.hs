@@ -3,7 +3,7 @@
 module Parser where
 
 import Ast (Expression (..), Statement (..))
-import Token (IntegerPart (intDigits), LexError, Lexer, LexerState (currentPosition), Position, Token (tokenType), TokenType (..), floatLiteralToString, runLexer, tokenizer)
+import Token (LexError, Lexer, LexerState (currentPosition), Position, Token (tokenType), TokenType (..), runLexer, tokenizer)
 
 data ParserError
   = SyntaxError ParseError
@@ -31,12 +31,12 @@ parseExpression = P $ \state -> case runLexer tokenizer state of
   Right (token, newState) -> case tokenType token of
     IntLiteral intString ->
       Right
-        ( IntLit {token = token, intValue = read (intDigits intString)},
+        ( IntLit {token = token, intValue = read intString},
           newState
         )
-    FloatLiteral {} ->
+    FloatLiteral floatString ->
       Right
-        ( FloatLit {floatValue = read (floatLiteralToString (tokenType token)), token = token},
+        ( FloatLit {floatValue = read floatString, token = token},
           newState
         )
     StringLiteral value ->

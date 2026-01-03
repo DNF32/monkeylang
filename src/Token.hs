@@ -12,8 +12,8 @@ data TokenType
   = Illegal
   | EOF
   | Identifier String
-  | IntLiteral IntegerPart
-  | FloatLiteral IntegerPart (Maybe FractionalPart) (Maybe ExponentPart)
+  | IntLiteral String
+  | FloatLiteral String
   | StringLiteral String
   | Assign Char
   | Plus Char
@@ -51,39 +51,9 @@ data Token = Token
   deriving (Eq, Show)
 
 data Number
-  = IntNum IntegerPart
-  | FloatNum IntegerPart (Maybe FractionalPart) (Maybe ExponentPart)
+  = IntNum String
+  | FloatNum String
   deriving (Eq, Show)
-
--- Wrappers for the components
-newtype IntegerPart = IntegerPart
-  {intDigits :: String}
-  deriving (Eq, Show)
-
-newtype FractionalPart = FractionalPart
-  {fracDigits :: String}
-  deriving (Eq, Show)
-
-data ExponentPart = ExponentPart
-  { expSign :: Maybe Char, -- '+' or '-', or Nothing
-    expDigits :: String
-  }
-  deriving (Eq, Show)
-
-floatLiteralToString :: TokenType -> String
-floatLiteralToString (FloatLiteral (IntegerPart intPart) mFrac mExp) =
-  intPart ++ fracStr ++ expStr
-  where
-    fracStr = case mFrac of
-      Nothing -> ""
-      Just (FractionalPart frac) -> "." ++ frac
-
-    expStr = case mExp of
-      Nothing -> ""
-      Just (ExponentPart expSign expDigits) -> case expSign of
-        Nothing -> "e" ++ "+" ++ expDigits
-        Just sign -> "e" ++ [sign] ++ expDigits
-floatLiteralToString otherwise = ""
 
 data Position = Position
   { line :: Int,
@@ -219,42 +189,37 @@ withPosition lexer = Lexer $ \state ->
 intL :: Lexer String
 intL = oneOrMore (satisfy isDigit)
 
-lexInt :: Lexer IntegerPart
-lexInt = IntegerPart <$> oneOrMore (satisfy isDigit)
+lexInt :: Lexer String
+lexInt = oneOrMore (satisfy isDigit)
 
-lexFractionalPart :: Lexer FractionalPart
-lexFractionalPart = FractionalPart <$> (charL '.' *> intL)
+lexFractionalPart :: Lexer String
+lexFractionalPart = ((:)) <$> charL '.' <*> intL
 
-lexExponentPart :: Lexer ExponentPart
+lexExponentPart :: Lexer String
 lexExponentPart =
-  (charL 'e' <|> charL 'E')
-    *> ( ExponentPart
-           <$> optional (satisfy (`elem` ['+', '-']))
-           <*> intL
-       )
+  ( \eChar x y -> case x of
+      Just sign -> eChar : sign : y
+      _ -> eChar : y
+  )
+    <$> (charL 'e' <|> charL 'E')
+    <*> optional (satisfy (`elem` ['+', '-']))
+    <*> intL
 
-numberL :: Lexer Number
+numberL :: Lexer TokenType
 numberL = do
   intPart <- lexInt
   maybeFrac <- optional lexFractionalPart
   maybeExp <- optional lexExponentPart
 
   pure $ case (maybeFrac, maybeExp) of
-    (Nothing, Nothing) -> IntNum intPart
-    _ -> FloatNum intPart maybeFrac maybeExp
-
-numberLexer :: Lexer TokenType
-numberLexer = Lexer $ \state ->
-  case runLexer numberL state of
-    Right (x, xs) ->
-      case x of
-        IntNum info -> Right (IntLiteral info, xs)
-        FloatNum intInfo maybeFrac maybeExponent -> Right (FloatLiteral intInfo maybeFrac maybeExponent, xs)
-    Left err -> Left err
+    (Nothing, Nothing) -> IntLiteral intPart
+    (Just frac, Just expPart) -> FloatLiteral (intPart ++ frac ++ expPart)
+    (Just frac, _) -> FloatLiteral (intPart ++ frac)
+    (_, Just expPart) -> FloatLiteral (intPart ++ expPart)
 
 safeNumberLexer :: Lexer TokenType
 safeNumberLexer = Lexer $ \state -> do
-  (parsedNumber, newState) <- runLexer numberLexer state
+  (parsedNumber, newState) <- runLexer numberL state
 
   case getInput newState of
     (x : _)
