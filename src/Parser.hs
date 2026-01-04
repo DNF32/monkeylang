@@ -2,7 +2,9 @@
 
 module Parser where
 
-import Ast (Expression (..), Statement (..))
+import Ast (Expression (..), Statement (..), infixToPrecedence)
+import Control.Applicative (Alternative (..))
+import Debug.Trace
 import SimpleParser
 import Token (LexError, LexerState (currentPosition), Position, Token (Token, tokenPosition, tokenType), TokenType (..), runLexer, tokenizer)
 
@@ -64,51 +66,162 @@ satisfyT predicate = SimpleParser $ \state ->
                 (currentPosition newState)
             )
 
-parseIdentifider :: AstParser Expression
-parseIdentifider =
-  tokenToIdentifier
+peekToken :: AstParser (Maybe Token)
+peekToken = SimpleParser $ \state ->
+  case runLexer tokenizer state of
+    Left _ -> Right (Nothing, state)
+    Right (t, _) -> Right (Just t, state)
+
+peekTokenType :: AstParser (Maybe TokenType)
+peekTokenType = fmap (fmap tokenType) peekToken
+
+parseLetStatement :: AstParser Statement
+parseLetStatement =
+  LetStatement
+    <$> isToken Let
+    <*> parseIndentifierExpression
+    <* isToken Assign
+    <*> parseExpressionRbp 0
+
+parseReturnStatement :: AstParser Statement
+parseReturnStatement = ReturnStatement <$> isToken Return <*> parseExpressionRbp 0
+
+parseIndentifierExpression :: AstParser Expression
+parseIndentifierExpression =
+  tokenToLit
     <$> satisfyT
       ( \tok -> case tokenType tok of
           Identifier _ -> True
           _ -> False
       )
   where
-    tokenToIdentifier tok@(Token {tokenType = Identifier name}) =
-      IdentifierLit
-        { name = name,
-          token = tok
-        }
+    tokenToLit tok = case tokenType tok of
+      Identifier name ->
+        IdentifierLit
+          { name = name,
+            token = tok
+          }
 
-parseLetStatement :: AstParser Statement
-parseLetStatement =
-  LetStatement
-    <$> isToken Let
-    <*> parseIdentifider
-    <* isToken Assign
-    <*> parseExpression
+parseIntExpression :: AstParser Expression
+parseIntExpression =
+  tokenToLit
+    <$> satisfyT
+      ( \tok -> case tokenType tok of
+          IntLiteral _ -> True
+          _ -> False
+      )
+  where
+    tokenToLit tok = case tokenType tok of
+      IntLiteral value ->
+        IntLit
+          { token = tok,
+            intValue = read value
+          }
 
-parseReturnStatement :: AstParser Statement
-parseReturnStatement = ReturnStatement <$> isToken Return <*> parseExpression
+parseFloatExpression :: AstParser Expression
+parseFloatExpression =
+  tokenToLit
+    <$> satisfyT
+      ( \tok -> case tokenType tok of
+          FloatLiteral _ -> True
+          _ -> False
+      )
+  where
+    tokenToLit tok = case tokenType tok of
+      FloatLiteral value ->
+        FloatLit
+          { token = tok,
+            floatValue = read value
+          }
 
-parseExpression :: AstParser Expression
-parseExpression = SimpleParser $ \state -> case runLexer tokenizer state of
-  Left lexErr ->
-    Left (TokenError lexErr)
-  Right (token, newState) -> case tokenType token of
-    IntLiteral intString ->
-      Right
-        ( IntLit {token = token, intValue = read intString},
-          newState
-        )
-    FloatLiteral floatString ->
-      Right
-        ( FloatLit {floatValue = read floatString, token = token},
-          newState
-        )
-    StringLiteral value ->
-      Right
-        ( StringLit {stringValue = value, token = token},
-          newState
-        )
-    otherwise ->
-      Left (newParserError "Token type parser not implement" (currentPosition state))
+parseStringExpression :: AstParser Expression
+parseStringExpression =
+  tokenToLit
+    <$> satisfyT
+      ( \tok -> case tokenType tok of
+          StringLiteral _ -> True
+          _ -> False
+      )
+  where
+    tokenToLit tok = case tokenType tok of
+      StringLiteral value ->
+        StringLit
+          { stringValue = value,
+            token = tok
+          }
+
+parseLiteralExpression :: AstParser Expression
+parseLiteralExpression = choice [parseFloatExpression, parseLiteralExpression, parseStringExpression, parseIntExpression, parseFloatExpression]
+
+parseBangExpression :: AstParser Expression
+parseBangExpression = PrefixExpression <$> isToken Bang <*> pure Bang <*> parseExpressionRbp 50
+
+parseMinusExpression :: AstParser Expression
+parseMinusExpression = PrefixExpression <$> isToken Minus <*> pure Minus <*> parseExpressionRbp 50
+
+parseBoolean :: AstParser Expression
+parseBoolean = parseTrueKeyword <|> parseFalseKeyword
+
+parseTrueKeyword :: AstParser Expression
+parseTrueKeyword =
+  BooleanLit
+    <$> satisfyT
+      ( \tok -> case tokenType tok of
+          TrueLit -> True
+          _ -> False
+      )
+    <*> pure True
+
+parseFalseKeyword :: AstParser Expression
+parseFalseKeyword =
+  BooleanLit
+    <$> satisfyT
+      ( \tok -> case tokenType tok of
+          FalseLit -> True
+          _ -> False
+      )
+    <*> pure False
+
+parseNud :: AstParser Expression
+parseNud = choice [parseBoolean, parseMinusExpression, parseBangExpression, parseLiteralExpression]
+
+parseInfixExpression :: TokenType -> Expression -> AstParser Expression
+parseInfixExpression tokenType expr = do
+  parsedToken <- isToken tokenType
+  rightExpr <- parseExpressionRbp (infixToPrecedence tokenType)
+  return InfixExpression {token = parsedToken, left = expr, operator = tokenType, right = rightExpr}
+
+parseSumInfixExpression :: Expression -> AstParser Expression
+parseSumInfixExpression = parseInfixExpression Plus
+
+parseMinusInfixExpression :: Expression -> AstParser Expression
+parseMinusInfixExpression = parseInfixExpression Minus
+
+parseMulInfixExpression :: Expression -> AstParser Expression
+parseMulInfixExpression = parseInfixExpression Asterisk
+
+parseDivInfixExpression :: Expression -> AstParser Expression
+parseDivInfixExpression = parseInfixExpression Slash
+
+traceParse :: String -> a -> a
+traceParse msg x = trace ("  " ++ msg) x
+
+parseExpressionRbp :: Integer -> AstParser Expression
+parseExpressionRbp precedence = do
+  expr <- parseNud
+  continueInfix precedence expr
+
+continueInfix :: Integer -> Expression -> AstParser Expression
+continueInfix precedence leftExpr = do
+  peekR <- peekToken
+  case peekR of
+    Just peekT | tokenType peekT /= Semicolon && infixToPrecedence (tokenType peekT) > precedence -> do
+      newExpr <-
+        choice
+          [ parseSumInfixExpression leftExpr,
+            parseMinusInfixExpression leftExpr,
+            parseMulInfixExpression leftExpr,
+            parseDivInfixExpression leftExpr
+          ]
+      continueInfix precedence newExpr -- tail recursion
+    _ -> return leftExpr

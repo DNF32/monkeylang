@@ -108,18 +108,6 @@ satisfy cb = SimpleParser $ \state ->
 charL :: Char -> Lexer Char
 charL s = satisfy (== s)
 
-oneOrMore :: Lexer a -> Lexer [a]
-oneOrMore la = (:) <$> la <*> zeroOrMore la
-
-zeroOrMore :: Lexer a -> Lexer [a]
-zeroOrMore la = oneOrMore la <|> pure []
-
-optional :: Lexer a -> Lexer (Maybe a)
-optional la = Just <$> la <|> pure Nothing
-
-choice :: [Lexer a] -> Lexer a
-choice = foldr (\b a -> a <|> (b)) empty
-
 -- whitespace and control characters
 nl :: Lexer Char
 ws :: Lexer Char

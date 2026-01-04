@@ -1,5 +1,6 @@
 module Main where
 
+import Ast (showExprTree, showTree)
 import Control.Applicative (Alternative (..))
 import Parser
 import Test.Hspec
@@ -15,3 +16,10 @@ initialState input = LexerState {getInput = input, currentPosition = Position {l
 
 main :: IO ()
 main = undefined
+
+test :: IO ()
+test =
+  let result = runAstParser (parseExpressionRbp 0) (initialState "10*16 - ;5")
+   in case result of
+        Right (expr, state) -> putStrLn $ showExprTree expr
+        Left err -> putStrLn $ "Error: " ++ show err
