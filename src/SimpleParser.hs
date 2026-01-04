@@ -61,4 +61,4 @@ optional :: (SimpleParserError e s) => (SimpleParser s e) a -> (SimpleParser s e
 optional la = Just <$> la <|> pure Nothing
 
 choice :: (SimpleParserError e s) => [(SimpleParser s e) a] -> (SimpleParser s e) a
-choice = foldr (\b a -> a <|> (b)) empty
+choice = foldr (<|>) empty

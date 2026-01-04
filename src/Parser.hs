@@ -32,6 +32,9 @@ instance SimpleParserError AstParserError LexerState where
 newParserError :: String -> Position -> AstParserError
 newParserError m p = SyntaxError (ParserError {errorMsg = m, errorPosition = p})
 
+newParserWithError :: String -> Position -> AstParser a
+newParserWithError m p = SimpleParser $ \state -> (Left (newParserError m p))
+
 expectedError :: Token -> TokenType -> AstParserError
 expectedError token expectedTokenType = newParserError ("Expected" ++ show (tokenType token) ++ "got" ++ show expectedTokenType) (tokenPosition token)
 
@@ -151,7 +154,7 @@ parseStringExpression =
           }
 
 parseLiteralExpression :: AstParser Expression
-parseLiteralExpression = choice [parseFloatExpression, parseLiteralExpression, parseStringExpression, parseIntExpression, parseFloatExpression]
+parseLiteralExpression = choice [parseFloatExpression, parseStringExpression, parseBoolean, parseIndentifierExpression, parseIntExpression]
 
 parseBangExpression :: AstParser Expression
 parseBangExpression = PrefixExpression <$> isToken Bang <*> pure Bang <*> parseExpressionRbp 50
@@ -183,11 +186,22 @@ parseFalseKeyword =
     <*> pure False
 
 parseNud :: AstParser Expression
-parseNud = choice [parseBoolean, parseMinusExpression, parseBangExpression, parseLiteralExpression]
+-- parseNud = choice [parseBoolean, parseMinusExpression, parseBangExpression, parseLiteralExpression]
+parseNud = do
+  peekR <- peekToken
+  case peekR of
+    Just peekT | tokenType peekT /= Semicolon && infixToPrecedence (tokenType peekT) > precedence -> do
+      newExpr <- case tokenType peekT of
+        Plus -> parseSumInfixExpression leftExpr
+        Minus -> parseMinusInfixExpression leftExpr
+        Asterisk -> parseMulInfixExpression leftExpr
+        Slash -> parseDivInfixExpression leftExpr
+        _ -> newParserWithError ("Unexpected token in infix position: " ++ show (tokenType peekT)) (tokenPosition peekT)
 
 parseInfixExpression :: TokenType -> Expression -> AstParser Expression
-parseInfixExpression tokenType expr = do
+parseInfixExpression tokenType expr = trace ("started an parseInfixExpression for " ++ show tokenType) $ do
   parsedToken <- isToken tokenType
+  traceM ("IsToken returned" ++ show parsedToken)
   rightExpr <- parseExpressionRbp (infixToPrecedence tokenType)
   return InfixExpression {token = parsedToken, left = expr, operator = tokenType, right = rightExpr}
 
@@ -209,6 +223,7 @@ traceParse msg x = trace ("  " ++ msg) x
 parseExpressionRbp :: Integer -> AstParser Expression
 parseExpressionRbp precedence = do
   expr <- parseNud
+  traceM ("parseExpressionRbp got expr = " ++ show expr)
   continueInfix precedence expr
 
 continueInfix :: Integer -> Expression -> AstParser Expression
@@ -216,12 +231,11 @@ continueInfix precedence leftExpr = do
   peekR <- peekToken
   case peekR of
     Just peekT | tokenType peekT /= Semicolon && infixToPrecedence (tokenType peekT) > precedence -> do
-      newExpr <-
-        choice
-          [ parseSumInfixExpression leftExpr,
-            parseMinusInfixExpression leftExpr,
-            parseMulInfixExpression leftExpr,
-            parseDivInfixExpression leftExpr
-          ]
-      continueInfix precedence newExpr -- tail recursion
+      newExpr <- case tokenType peekT of
+        Plus -> parseSumInfixExpression leftExpr
+        Minus -> parseMinusInfixExpression leftExpr
+        Asterisk -> parseMulInfixExpression leftExpr
+        Slash -> parseDivInfixExpression leftExpr
+        _ -> newParserWithError ("Unexpected token in infix position: " ++ show (tokenType peekT)) (tokenPosition peekT)
+      continueInfix precedence newExpr
     _ -> return leftExpr
