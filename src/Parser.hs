@@ -64,16 +64,16 @@ satisfyT predicate = SimpleParser $ \state ->
                 (currentPosition newState)
             )
 
-parseIdentifiderNode :: AstParser Expression
-parseIdentifiderNode =
-  tokenToIdentifierNode
+parseIdentifider :: AstParser Expression
+parseIdentifider =
+  tokenToIdentifier
     <$> satisfyT
       ( \tok -> case tokenType tok of
           Identifier _ -> True
           _ -> False
       )
   where
-    tokenToIdentifierNode tok@(Token {tokenType = Identifier name}) =
+    tokenToIdentifier tok@(Token {tokenType = Identifier name}) =
       IdentifierLit
         { name = name,
           token = tok
@@ -83,7 +83,7 @@ parseLetStatement :: AstParser Statement
 parseLetStatement =
   LetStatement
     <$> isToken Let
-    <*> parseIdentifiderNode
+    <*> parseIdentifider
     <* isToken Assign
     <*> parseExpression
 
