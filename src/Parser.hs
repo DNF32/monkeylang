@@ -4,9 +4,10 @@ module Parser where
 
 import Ast (Expression (..), Statement (..), infixToPrecedence)
 import Control.Applicative (Alternative (..))
+import Control.Lens
 import Debug.Trace
 import SimpleParser
-import Token (LexError, LexerState (currentPosition), Position, Token (Token, tokenPosition, tokenType), TokenType (..), runLexer, tokenizer)
+import Token (LexError, LexerState (currentPosition), Position, Token (_tokenType), TokenType (..), runLexer, tokenPosition, tokenType, tokenizer)
 
 data AstParserError
   = SyntaxError ParserError
@@ -36,21 +37,18 @@ newParserWithError :: String -> Position -> AstParser a
 newParserWithError m p = SimpleParser $ \state -> (Left (newParserError m p))
 
 expectedError :: Token -> TokenType -> AstParserError
-expectedError token expectedTokenType = newParserError ("Expected" ++ show (tokenType token) ++ "got" ++ show expectedTokenType) (tokenPosition token)
+expectedError token expectedTokenType = newParserError ("Expected" ++ show (token ^. tokenType) ++ "got" ++ show expectedTokenType) (token ^. tokenPosition)
 
 type AstParser a = SimpleParser LexerState AstParserError a
 
 runAstParser :: AstParser a -> LexerState -> Either AstParserError (a, LexerState)
 runAstParser = run
 
-parseLet :: AstParser TokenType
-parseLet = undefined
-
 isToken :: TokenType -> AstParser Token
 isToken tp = SimpleParser $ \state ->
   case runLexer tokenizer state of
     Right (token, newState)
-      | tokenType token == tp -> Right (token, newState)
+      | token ^. tokenType == tp -> Right (token, newState)
       | otherwise -> Left (expectedError token tp)
     Left err -> Left (TokenError err)
 
@@ -65,7 +63,7 @@ satisfyT predicate = SimpleParser $ \state ->
       | otherwise ->
           Left
             ( newParserError
-                ("unexpected token: " ++ show (tokenType token))
+                ("unexpected token: " ++ show (token ^. tokenType))
                 (currentPosition newState)
             )
 
@@ -76,29 +74,18 @@ peekToken = SimpleParser $ \state ->
     Right (t, _) -> Right (Just t, state)
 
 peekTokenType :: AstParser (Maybe TokenType)
-peekTokenType = fmap (fmap tokenType) peekToken
-
-parseLetStatement :: AstParser Statement
-parseLetStatement =
-  LetStatement
-    <$> isToken Let
-    <*> parseIndentifierExpression
-    <* isToken Assign
-    <*> parseExpressionRbp 0
-
-parseReturnStatement :: AstParser Statement
-parseReturnStatement = ReturnStatement <$> isToken Return <*> parseExpressionRbp 0
+peekTokenType = fmap (fmap _tokenType) peekToken
 
 parseIndentifierExpression :: AstParser Expression
 parseIndentifierExpression =
   tokenToLit
     <$> satisfyT
-      ( \tok -> case tokenType tok of
+      ( \tok -> case tok ^. tokenType of
           Identifier _ -> True
           _ -> False
       )
   where
-    tokenToLit tok = case tokenType tok of
+    tokenToLit tok = case tok ^. tokenType of
       Identifier name ->
         IdentifierLit
           { name = name,
@@ -109,12 +96,12 @@ parseIntExpression :: AstParser Expression
 parseIntExpression =
   tokenToLit
     <$> satisfyT
-      ( \tok -> case tokenType tok of
+      ( \tok -> case tok ^. tokenType of
           IntLiteral _ -> True
           _ -> False
       )
   where
-    tokenToLit tok = case tokenType tok of
+    tokenToLit tok = case tok ^. tokenType of
       IntLiteral value ->
         IntLit
           { token = tok,
@@ -125,12 +112,12 @@ parseFloatExpression :: AstParser Expression
 parseFloatExpression =
   tokenToLit
     <$> satisfyT
-      ( \tok -> case tokenType tok of
+      ( \tok -> case tok ^. tokenType of
           FloatLiteral _ -> True
           _ -> False
       )
   where
-    tokenToLit tok = case tokenType tok of
+    tokenToLit tok = case tok ^. tokenType of
       FloatLiteral value ->
         FloatLit
           { token = tok,
@@ -141,12 +128,12 @@ parseStringExpression :: AstParser Expression
 parseStringExpression =
   tokenToLit
     <$> satisfyT
-      ( \tok -> case tokenType tok of
+      ( \tok -> case tok ^. tokenType of
           StringLiteral _ -> True
           _ -> False
       )
   where
-    tokenToLit tok = case tokenType tok of
+    tokenToLit tok = case tok ^. tokenType of
       StringLiteral value ->
         StringLit
           { stringValue = value,
@@ -169,7 +156,7 @@ parseTrueKeyword :: AstParser Expression
 parseTrueKeyword =
   BooleanLit
     <$> satisfyT
-      ( \tok -> case tokenType tok of
+      ( \tok -> case tok ^. tokenType of
           TrueLit -> True
           _ -> False
       )
@@ -179,29 +166,31 @@ parseFalseKeyword :: AstParser Expression
 parseFalseKeyword =
   BooleanLit
     <$> satisfyT
-      ( \tok -> case tokenType tok of
+      ( \tok -> case tok ^. tokenType of
           FalseLit -> True
           _ -> False
       )
     <*> pure False
 
 parseNud :: AstParser Expression
--- parseNud = choice [parseBoolean, parseMinusExpression, parseBangExpression, parseLiteralExpression]
 parseNud = do
   peekR <- peekToken
   case peekR of
-    Just peekT | tokenType peekT /= Semicolon && infixToPrecedence (tokenType peekT) > precedence -> do
-      newExpr <- case tokenType peekT of
-        Plus -> parseSumInfixExpression leftExpr
-        Minus -> parseMinusInfixExpression leftExpr
-        Asterisk -> parseMulInfixExpression leftExpr
-        Slash -> parseDivInfixExpression leftExpr
-        _ -> newParserWithError ("Unexpected token in infix position: " ++ show (tokenType peekT)) (tokenPosition peekT)
+    Just peekT | peekT ^. tokenType /= Semicolon -> do
+      case peekT ^. tokenType of
+        Identifier _ -> parseLiteralExpression
+        IntLiteral _ -> parseLiteralExpression
+        StringLiteral _ -> parseLiteralExpression
+        FloatLiteral _ -> parseLiteralExpression
+        TrueLit -> parseBoolean
+        FalseLit -> parseBoolean
+        Bang -> parseBangExpression
+        Minus -> parseBangExpression
+        _ -> newParserWithError ("Unexpected token in infix position: " ++ show (peekT ^. tokenType)) (peekT ^. tokenPosition)
 
 parseInfixExpression :: TokenType -> Expression -> AstParser Expression
-parseInfixExpression tokenType expr = trace ("started an parseInfixExpression for " ++ show tokenType) $ do
+parseInfixExpression tokenType expr = do
   parsedToken <- isToken tokenType
-  traceM ("IsToken returned" ++ show parsedToken)
   rightExpr <- parseExpressionRbp (infixToPrecedence tokenType)
   return InfixExpression {token = parsedToken, left = expr, operator = tokenType, right = rightExpr}
 
@@ -223,19 +212,46 @@ traceParse msg x = trace ("  " ++ msg) x
 parseExpressionRbp :: Integer -> AstParser Expression
 parseExpressionRbp precedence = do
   expr <- parseNud
-  traceM ("parseExpressionRbp got expr = " ++ show expr)
   continueInfix precedence expr
 
 continueInfix :: Integer -> Expression -> AstParser Expression
 continueInfix precedence leftExpr = do
   peekR <- peekToken
   case peekR of
-    Just peekT | tokenType peekT /= Semicolon && infixToPrecedence (tokenType peekT) > precedence -> do
-      newExpr <- case tokenType peekT of
+    Just peekT | peekT ^. tokenType /= Semicolon && infixToPrecedence (peekT ^. tokenType) > precedence -> do
+      newExpr <- case peekT ^. tokenType of
         Plus -> parseSumInfixExpression leftExpr
         Minus -> parseMinusInfixExpression leftExpr
         Asterisk -> parseMulInfixExpression leftExpr
         Slash -> parseDivInfixExpression leftExpr
-        _ -> newParserWithError ("Unexpected token in infix position: " ++ show (tokenType peekT)) (tokenPosition peekT)
+        _ -> newParserWithError ("Unexpected token in infix position: " ++ show (peekT ^. tokenType)) (peekT ^. tokenPosition)
       continueInfix precedence newExpr
     _ -> return leftExpr
+
+parseLetStatement :: AstParser Statement
+parseLetStatement =
+  LetStatement
+    <$> isToken Let
+    <*> parseIndentifierExpression
+    <* isToken Assign
+    <*> parseExpressionRbp 0
+    <* optional (isToken Semicolon)
+
+parseReturnStatement :: AstParser Statement
+parseReturnStatement = ReturnStatement <$> isToken Return <*> parseExpressionRbp 0 <* optional (isToken Semicolon)
+
+parseExpressionStatement :: Token -> AstParser Statement
+parseExpressionStatement token = ExpressionStatement <$> pure token <*> parseExpressionRbp 0 <* optional (isToken Semicolon)
+
+parseStatement :: AstParser Statement
+parseStatement = do
+  maybeToken <- peekToken
+  case maybeToken of
+    Just tok -> do
+      case tok ^. tokenType of
+        Let -> parseLetStatement
+        Return -> parseReturnStatement
+        _ -> parseExpressionStatement tok
+
+parseProgram :: AstParser [Statement]
+parseProgram = oneOrMore parseStatement

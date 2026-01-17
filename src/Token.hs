@@ -1,10 +1,12 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 {-# HLINT ignore "Redundant bracket" #-}
 module Token where
 
 import Control.Applicative (Alternative (..))
+import Control.Lens
 import Data.Char (isAlpha, isAlphaNum, isDigit)
 import Data.Traversable ()
 import SimpleParser
@@ -47,8 +49,8 @@ data TokenType
   deriving (Eq, Show)
 
 data Token = Token
-  { tokenType :: TokenType,
-    tokenPosition :: Position
+  { _tokenType :: TokenType,
+    _tokenPosition :: Position
   }
   deriving (Eq, Show)
 
@@ -58,26 +60,30 @@ data Number
   deriving (Eq, Show)
 
 data Position = Position
-  { line :: Int,
-    column :: Int
+  { _line :: Int,
+    _column :: Int
   }
   deriving (Eq, Show)
 
 -- Lexer State & Error Types
 data LexError = LexError
-  { errorMsg :: String,
-    errorPosition :: Position
+  { _errorMsg :: String,
+    _errorPosition :: Position
   }
   deriving (Show)
 
+makeLenses ''Token
+makeLenses ''LexError
+makeLenses ''Position
+
 newLexError :: String -> Position -> LexError
-newLexError m p = LexError {errorMsg = m, errorPosition = p}
+newLexError m p = LexError {_errorMsg = m, _errorPosition = p}
 
 instance SimpleParserError LexError LexerState where
   emptyError state =
     LexError
-      { errorMsg = "Empty parser",
-        errorPosition = currentPosition state
+      { _errorMsg = "Empty parser",
+        _errorPosition = currentPosition state
       }
 
 data LexerState = LexerState
@@ -127,14 +133,23 @@ escapedLexer = choice (map (fmap Escaped) [nl, ws, cr, tab])
 anyNonWhitespaceLexer :: Lexer Char
 anyNonWhitespaceLexer = satisfy (`notElem` ['\n', '\r', '\t', ' '])
 
+eofLexer :: Lexer TokenType
+eofLexer = SimpleParser $ \state ->
+  case getInput state of
+    [] -> Right (EOF, state)
+    _ -> Left $ newLexError "Expected end of input" (currentPosition state)
+
 -- Position Tracking
 
 advancePosition :: Char -> Position -> Position
 advancePosition c pos = case c of
-  '\n' -> Position {line = line pos + 1, column = 1} -- new line
-  '\r' -> pos -- ignore carriage return
-  '\t' -> pos {column = column pos + tabWidth} -- tab
-  _ -> pos {column = column pos + 1} -- normal char
+  '\n' ->
+    pos
+      & line %~ (+ 1)
+      & column .~ 1
+  '\r' -> pos
+  '\t' -> pos & column %~ (+ tabWidth)
+  _ -> pos & column %~ (+ 1)
   where
     tabWidth = 4 -- configurable
 
@@ -142,7 +157,7 @@ withPosition :: Lexer TokenType -> Lexer Token
 withPosition lexer = SimpleParser $ \state ->
   let pos = currentPosition state
    in case runLexer lexer state of
-        Right (tokenType, newState) -> Right (Token tokenType pos, newState)
+        Right (tokenT, newState) -> Right (Token tokenT pos, newState)
         Left err -> Left err
 
 -- Number Lexers
@@ -250,14 +265,14 @@ specialDoubleCharSymbolsLexer = choice (map (uncurry twoCharSymbolToLexer) twoCh
 tokenizer :: Lexer Token
 tokenizer = do
   tok <- tokenizer'
-  case tokenType tok of
+  case tok ^. tokenType of
     Escaped _ -> tokenizer -- Skip and get next token
     _ -> return tok
 
 tokenizer' :: Lexer Token
 tokenizer' = withPosition $ SimpleParser $ \state ->
   case getInput state of
-    [] -> Left (newLexError "Unexpected end of input" (currentPosition state))
+    [] -> runLexer eofLexer state
     c : cs
       | c == '"' -> runLexer stringLexer state
       | c == '!' -> runLexer specialDoubleCharSymbolsLexer state
@@ -274,17 +289,14 @@ nextToken :: LexerState -> Either LexError (Token, LexerState)
 nextToken = runLexer tokenizer
 
 tokenizerAll :: LexerState -> Either LexError [Token]
-tokenizerAll state =
-  if null (getInput state)
-    then
-      return []
-    else do
-      result <- runLexer tokenizer state
-      case result of
-        (token, newState) -> do
-          restTokens <- tokenizerAll newState
-          return (token : restTokens)
+tokenizerAll state = do
+  do
+    result <- runLexer tokenizer state
+    case result of
+      (token, newState) -> do
+        restTokens <- tokenizerAll newState
+        return (token : restTokens)
 
 -- Helper
 toTokenType :: Either LexError [Token] -> Either LexError [TokenType]
-toTokenType = fmap (map (tokenType))
+toTokenType = fmap (map (_tokenType))
