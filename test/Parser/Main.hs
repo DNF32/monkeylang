@@ -3,7 +3,7 @@
 
 module Main where
 
-import Ast (Expression (..), Statement (..))
+import Ast (Expression (..), Statement (..), expressionToString, statementToString, (?==))
 import Control.Monad
 import Parser
 import Test.Hspec
@@ -15,34 +15,37 @@ initialState input = LexerState {getInput = input, currentPosition = Position {_
 main :: IO ()
 main = hspec spec
 
+specOpPrecedence :: Spec
+specOpPrecedence = do
+  describe "prefix expression" $ do
+    let testCases =
+          [ ("-a * b", "((-a) * b)"),
+            ("!-a", "(!(-a))"),
+            ("a + b + c", "((a + b) + c)"),
+            ("a + b - c", "((a + b) - c)"),
+            ("a * b * c", "((a * b) * c)"),
+            ("a * b / c", "((a * b) / c)"),
+            ("a + b / c", "(a + (b / c))"),
+            ("a + b * c + d / e - f", "(((a + (b * c)) + (d / e)) - f)"),
+            ("3 + 4; -5 * 5", "(3 + 4)((-5) * 5)"),
+            ("5 > 4 == 3 < 4", "((5 > 4) == (3 < 4))"),
+            ("5 < 4 != 3 > 4", "((5 < 4) != (3 > 4))"),
+            ("3 + 4 * 5 == 3 * 1 + 4 * 5", "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))")
+          ]
+    forM_ testCases $ \(input, expectedString) -> do
+      describe ("parsing: " ++ input) $ do
+        let state = initialState input
+        case runAstParser parseProgram state of
+          Left err ->
+            it "should parse successfully" $
+              expectationFailure ("Parser failed: " ++ show err)
+          Right (program, _) ->
+            it "should have the correct program string" $ do
+              statementToString program `shouldBe` expectedString
+
 spec :: Spec
 spec = do
   describe "position tracking" $ do
-    it "parses let statement with correct components" $ do
-      let state = initialState "let x = 10;"
-      case runAstParser parseProgram state of
-        Left err ->
-          expectationFailure ("Parser failed: " ++ show err)
-        Right (stmts, _) -> do
-          length stmts `shouldBe` 1
-          case head stmts of
-            LetStatement
-              { name = IdentifierLit {name = varName},
-                value = IntLit {intValue = varVal}
-              } -> do
-                varName `shouldBe` "x"
-                varVal `shouldBe` 10
-            _ ->
-              expectationFailure "Expected LetStatement with identifier and int literal"
-
-    it "parses two statements" $ do
-      let state = initialState "let x = 10; return 10"
-      case runAstParser parseProgram state of
-        Left err ->
-          expectationFailure ("Parser failed: " ++ show err)
-        Right (stmts, _) -> do
-          length stmts `shouldBe` 2
-
     describe "let statement" $ do
       let testCases =
             [ ("let x = 10;", "x", isIntLitWithValue 10),
@@ -58,7 +61,7 @@ spec = do
             Left err ->
               it "should parse successfully" $
                 expectationFailure ("Parser failed: " ++ show err)
-            Right (stmts, _) ->
+            Right (Program stmts, _) ->
               testLetStatementSpec expectedId exprPredicate (head stmts)
 
     describe "return statement" $ do
@@ -74,10 +77,53 @@ spec = do
             Left err ->
               it "should parse successfully" $
                 expectationFailure ("Parser failed: " ++ show err)
-            Right (stmts, _) ->
+            Right (Program stmts, _) ->
               testReturnStatementSpec exprPredicate (head stmts)
+    describe "prefix expression" $ do
+      let testCases =
+            [ ("!that", isBangWithExpr (IdentifierLit identityToken "that")),
+              ("-10", isMinusWithExpr (IntLit identityToken 10)),
+              ("!true", isBangWithExpr (BooleanLit identityToken True)),
+              ("!false", isBangWithExpr (BooleanLit identityToken False)),
+              ("!False", isBangWithExpr (IdentifierLit identityToken "False"))
+            ]
+      forM_ testCases $ \(input, exprPredicate) -> do
+        describe ("parsing: " ++ input) $ do
+          let state = initialState input
+          case runAstParser parseProgram state of
+            Left err ->
+              it "should parse successfully" $
+                expectationFailure ("Parser failed: " ++ show err)
+            Right (Program stmts, _) ->
+              testExpressionStatementSpec exprPredicate (head stmts)
 
--- Helper that returns a Spec for detailed test output
+literalTest :: Spec
+literalTest = do
+  describe "integer literal" $ do
+    let state = initialState "5;"
+    case runAstParser parseProgram state of
+      Left err ->
+        it "should parse successfully" $
+          expectationFailure ("Parser failed: " ++ show err)
+      Right (Program stmts, _) ->
+        testExpressionStatementSpec (isIntLitWithValue 5) (head stmts)
+  describe "string literal" $ do
+    let state = initialState "\"that\""
+    case runAstParser parseProgram state of
+      Left err ->
+        it "should parse successfully" $
+          expectationFailure ("Parser failed: " ++ show err)
+      Right (Program stmts, _) ->
+        testExpressionStatementSpec (isStringLitWith "that") (head stmts)
+  describe "float literal" $ do
+    let state = initialState "3.10"
+    case runAstParser parseProgram state of
+      Left err ->
+        it "should parse successfully" $
+          expectationFailure ("Parser failed: " ++ show err)
+      Right (Program stmts, _) ->
+        testExpressionStatementSpec (isFloatLitWith 3.10) (head stmts)
+
 testLetStatementSpec :: String -> (Expression -> Bool) -> Statement -> Spec
 testLetStatementSpec expectedId exprPredicate parsedStatement = do
   it "should be a LetStatement" $
@@ -115,7 +161,18 @@ testExpressionStatementSpec exprPredicate parsedStatement = do
     case parsedStatement of
       ExpressionStatement {expr = expr} ->
         expr `shouldSatisfy` exprPredicate
-      _ -> expectationFailure "Not a ReturnStatement"
+      _ -> expectationFailure "not an expression statment"
+
+testOpPrecendenceStringSpec :: String -> Statement -> Spec
+testOpPrecendenceStringSpec expected stmt = do
+  it "should be a ExpressionStatement" $
+    stmt `shouldSatisfy` isExpressionStatement
+
+  it "should have correct value expression" $
+    case stmt of
+      ExpressionStatement {expr = expr} ->
+        expressionToString expr `shouldBe` expected
+      _ -> expectationFailure "not an expression statment"
 
 -- Helper to check if statement is a LetStatement
 isLetStatement :: Statement -> Bool
@@ -135,6 +192,14 @@ isIntLitWithValue :: Integer -> Expression -> Bool
 isIntLitWithValue expected (IntLit _ val) = val == expected
 isIntLitWithValue _ _ = False
 
+isStringLitWith :: String -> Expression -> Bool
+isStringLitWith expected (StringLit _ val) = val == expected
+isStringLitWith _ _ = False
+
+isFloatLitWith :: Float -> Expression -> Bool
+isFloatLitWith expected (FloatLit _ val) = val == expected
+isFloatLitWith _ _ = False
+
 isIdentifier :: String -> Expression -> Bool
 isIdentifier expected (IdentifierLit _ name) = name == expected
 isIdentifier _ _ = False
@@ -146,3 +211,22 @@ isStringLit _ _ = False
 isBoolLit :: Bool -> Expression -> Bool
 isBoolLit expected (BooleanLit _ val) = val == expected
 isBoolLit _ _ = False
+
+isBangExpr :: Expression -> Bool
+isBangExpr (PrefixExpression _ op _) = op == Bang
+isBangExpr _ = False
+
+isBangWithExpr :: Expression -> Expression -> Bool
+isBangWithExpr expected (PrefixExpression _ Bang expr) = expr ?== expected
+isBangWithExpr _ _ = False
+
+isMinusExpr :: Expression -> Bool
+isMinusExpr (PrefixExpression _ op _) = op == Minus
+isMinusExpr _ = False
+
+isMinusWithExpr :: Expression -> Expression -> Bool
+isMinusWithExpr expected (PrefixExpression _ Minus expr) = expr ?== expected
+isMinusWithExpr _ _ = False
+
+identityToken :: Token
+identityToken = Token Illegal (Position 0 0)

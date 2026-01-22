@@ -6,6 +6,10 @@
 module Ast
   ( Expression (..),
     Statement (..),
+    (?==),
+    Precedence (..),
+    expressionToString,
+    statementToString,
     infixToPrecedence,
     -- Expression lenses
     exprToken,
@@ -34,6 +38,7 @@ module Ast
 where
 
 import Control.Lens
+import Data.List (intercalate)
 import Token (LexerState (currentPosition), Token (..), TokenType (..), tokenType)
 
 type Operator = TokenType
@@ -53,28 +58,29 @@ data Expression
   | IfExpression {token :: Token, condition :: Expression, consequence :: [Statement], alternative :: Maybe [Statement]}
   deriving (Eq, Show)
 
--- (==?) :: Expression -> Expression -> Bool
--- IntLit (Token {tokenPosition = posa}) a
---  ==? IntLit (Token {tokenPosition = posb}) b =
---    a == b && posa == posb
--- FloatLit (Token {tokenPosition = posa}) a
---  ==? FloatLit (Token {tokenPosition = posb}) b =
---    a == b && posa == posb
--- StringLit (Token {tokenPosition = posa}) a
---  ==? StringLit (Token {tokenPosition = posb}) b =
---    a == b && posa == posb
--- IdentifierLit (Token {tokenPosition = posa}) a
---  ==? IdentifierLit (Token {tokenPosition = posb}) b =
---    a == b && posa == posb
--- BooleanLit (Token {tokenPosition = posa}) a
---  ==? BooleanLit (Token {tokenPosition = posb}) b =
---    a == b && posa == posb
--- PrefixExpression (Token {tokenPosition = posa}) op1 r1
---  ==? PrefixExpression (Token {tokenPosition = posb}) op2 r2 =
---    op1 == op2 && r1 ==? r2 && posa == posb
--- InfixExpression (Token {tokenPosition = posa}) l1 op1 r1
---  ==? InfixExpression (Token {tokenPosition = posb}) l2 op2 r2 =
---    op1 == op2 && l1 ==? l2 && r1 ==? r2 && posa == posb
+infix 4 ?==
+
+(?==) :: Expression -> Expression -> Bool
+IntLit {intValue = lhs} ?== IntLit {intValue = rhs} = lhs == rhs
+FloatLit {floatValue = lhs} ?== FloatLit {floatValue = rhs} = lhs == rhs
+StringLit {stringValue = lhs} ?== StringLit {stringValue = rhs} = lhs == rhs
+IdentifierLit {name = lhs} ?== IdentifierLit {name = rhs} = lhs == rhs
+ArrayLit {elements = lhs} ?== ArrayLit {elements = rhs} = expressionsEqual lhs rhs
+BooleanLit {value = lhs} ?== BooleanLit {value = rhs} = lhs == rhs
+PrefixExpression {operator = lop, right = lr} ?== PrefixExpression {operator = rop, right = rr} =
+  lop == rop && lr ?== rr
+InfixExpression {left = ll, operator = lop, right = lr} ?== InfixExpression {left = rl, operator = rop, right = rr} =
+  lop == rop && ll ?== rl && lr ?== rr
+FunctionLit {parameters = lp, body = lb} ?== FunctionLit {parameters = rp, body = rb} =
+  expressionsEqual lp rp && statementsEqual lb rb
+CallExpression {function = lf, arguments = la} ?== CallExpression {function = rf, arguments = ra} =
+  lf ?== rf && expressionsEqual la ra
+IndexExpression {left = ll, index = li} ?== IndexExpression {left = rl, index = ri} =
+  ll ?== rl && li ?== ri
+IfExpression {condition = lc, consequence = lcons, alternative = lalt}
+  ?== IfExpression {condition = rc, consequence = rcons, alternative = ralt} =
+    lc ?== rc && statementsEqual lcons rcons && maybeStatementsEqual lalt ralt
+_ ?== _ = False
 
 data Statement
   = Program {statements :: [Statement]}
@@ -83,6 +89,36 @@ data Statement
   | ExpressionStatement {token :: Token, expr :: Expression}
   | BlockStatement {statements :: [Statement]}
   deriving (Eq, Show)
+
+expressionsEqual :: [Expression] -> [Expression] -> Bool
+expressionsEqual [] [] = True
+expressionsEqual (lhs : restLhs) (rhs : restRhs) =
+  lhs ?== rhs && expressionsEqual restLhs restRhs
+expressionsEqual _ _ = False
+
+statementsEqual :: [Statement] -> [Statement] -> Bool
+statementsEqual [] [] = True
+statementsEqual (lhs : restLhs) (rhs : restRhs) =
+  statementEqual lhs rhs && statementsEqual restLhs restRhs
+statementsEqual _ _ = False
+
+statementEqual :: Statement -> Statement -> Bool
+statementEqual (Program {statements = lhs}) (Program {statements = rhs}) =
+  statementsEqual lhs rhs
+statementEqual LetStatement {name = lhsName, value = lhsValue} LetStatement {name = rhsName, value = rhsValue} =
+  lhsName ?== rhsName && lhsValue ?== rhsValue
+statementEqual ReturnStatement {result = lhsResult} ReturnStatement {result = rhsResult} =
+  lhsResult ?== rhsResult
+statementEqual ExpressionStatement {expr = lhsExpr} ExpressionStatement {expr = rhsExpr} =
+  lhsExpr ?== rhsExpr
+statementEqual BlockStatement {statements = lhs} BlockStatement {statements = rhs} =
+  statementsEqual lhs rhs
+statementEqual _ _ = False
+
+maybeStatementsEqual :: Maybe [Statement] -> Maybe [Statement] -> Bool
+maybeStatementsEqual Nothing Nothing = True
+maybeStatementsEqual (Just lhs) (Just rhs) = statementsEqual lhs rhs
+maybeStatementsEqual _ _ = False
 
 makeLensesFor
   [ ("token", "exprToken"),
@@ -114,16 +150,43 @@ makeLensesFor
   ]
   ''Statement
 
-infixToPrecedence :: TokenType -> Integer
+data Precedence = LOWEST | EQUALS | LESSGREATER | SUM | PRODUCT | PREFIX | CALL | INDEX deriving (Ord, Eq, Show)
+
+infixToPrecedence :: TokenType -> Precedence
 infixToPrecedence token = case token of
-  Equal -> 1
-  NotEqual -> 10
-  LessThan -> 10
-  GreaterThan -> 10
-  Plus -> 10
-  Minus -> 10
-  Slash -> 15
-  Asterisk -> 15
-  LParen -> 10
-  LBracket -> 10
-  otherwise -> 0
+  Equal -> EQUALS
+  NotEqual -> EQUALS
+  LessThan -> LESSGREATER
+  GreaterThan -> LESSGREATER
+  Plus -> SUM
+  Minus -> SUM
+  Slash -> PRODUCT
+  Asterisk -> PRODUCT
+  LParen -> CALL
+  LBracket -> INDEX
+  otherwise -> LOWEST
+
+statementToString :: Statement -> String
+statementToString (LetStatement _ name value) = "let " ++ expressionToString name ++ " = " ++ expressionToString value
+statementToString (ReturnStatement _ value) = "return " ++ expressionToString value
+statementToString (ExpressionStatement _ value) = expressionToString value
+statementToString (BlockStatement stmts) = intercalate "" (map statementToString stmts)
+statementToString (Program stmts) = intercalate "" (map statementToString stmts)
+
+expressionToString :: Expression -> String
+expressionToString (IntLit _ val) = show val
+expressionToString (FloatLit _ val) = show val
+expressionToString (StringLit _ val) = val
+expressionToString (IdentifierLit _ val) = val
+expressionToString (BooleanLit _ val) = show val
+expressionToString (ArrayLit _ elements) = "[" ++ intercalate ", " (map expressionToString elements) ++ "]"
+expressionToString (PrefixExpression _ Bang val) = "(" ++ "!" ++ expressionToString val ++ ")"
+expressionToString (PrefixExpression _ Minus val) = "(" ++ "-" ++ expressionToString val ++ ")"
+expressionToString (InfixExpression _ left Plus right) = "(" ++ expressionToString left ++ " + " ++ expressionToString right ++ ")"
+expressionToString (InfixExpression _ left Minus right) = "(" ++ expressionToString left ++ " - " ++ expressionToString right ++ ")"
+expressionToString (InfixExpression _ left Asterisk right) = "(" ++ expressionToString left ++ " * " ++ expressionToString right ++ ")"
+expressionToString (InfixExpression _ left Slash right) = "(" ++ expressionToString left ++ " / " ++ expressionToString right ++ ")"
+expressionToString (InfixExpression _ left LessThan right) = "(" ++ expressionToString left ++ " < " ++ expressionToString right ++ ")"
+expressionToString (InfixExpression _ left GreaterThan right) = "(" ++ expressionToString left ++ " > " ++ expressionToString right ++ ")"
+expressionToString (InfixExpression _ left Equal right) = "(" ++ expressionToString left ++ " == " ++ expressionToString right ++ ")"
+expressionToString (InfixExpression _ left NotEqual right) = "(" ++ expressionToString left ++ " != " ++ expressionToString right ++ ")"
