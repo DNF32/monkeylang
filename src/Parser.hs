@@ -2,7 +2,7 @@
 
 module Parser where
 
-import Ast (Expression (..), Precedence (..), Statement (..), infixToPrecedence)
+import Ast (Expression (..), Precedence (..), Statement (..), exprToken, infixToPrecedence)
 import Control.Applicative (Alternative (..))
 import Control.Lens
 import Debug.Trace
@@ -165,18 +165,37 @@ parseFalseKeyword =
     <*> pure False
 
 parseGroupExpression :: AstParser Expression
-parseGroupExpression = isToken RBrace *> parseExpressionRbp LOWEST <* isToken LParen
+parseGroupExpression = isToken LParen *> parseExpressionRbp LOWEST <* isToken RParen
+
+parseCallExpression :: Expression -> AstParser Expression
+parseCallExpression expr@(IdentifierLit tok _) = CallExpression tok expr <$> parseArgs
+parseCallExpression expr@(FunctionLit tok parameters _) = CallExpression tok expr <$> parseArgs
+parseCallExpression expr =
+  newParserWithError
+    ("Tried to create a Call expression without IdentifierLit or Function Lit, found :" ++ show (expr ^. exprToken . tokenType))
+    (expr ^. exprToken . tokenPosition)
 
 parseParameters :: AstParser [Expression]
 parseParameters = choice [parseZeroParameters, parseOneOrMoreParameter]
 
 parseOneOrMoreParameter :: AstParser [Expression]
-parseOneOrMoreParameter = isToken RBrace *> parseOneOrMoreParameter' <* isToken LParen
+parseOneOrMoreParameter = isToken LParen *> parseOneOrMoreParameter' <* isToken RParen
   where
     parseOneOrMoreParameter' = (:) <$> parseIndentifierExpression <*> zeroOrMore (isToken Comma *> parseIndentifierExpression)
 
 parseZeroParameters :: AstParser [Expression]
-parseZeroParameters = isToken RBrace *> isToken LParen *> pure []
+parseZeroParameters = isToken LParen *> isToken RParen *> pure []
+
+parseArgs :: AstParser [Expression]
+parseArgs = choice [parseZeroArgs, parseOneOrMoreArgs]
+
+parseOneOrMoreArgs :: AstParser [Expression]
+parseOneOrMoreArgs = isToken LParen *> parseOneOrMoreArgs' <* isToken RParen
+  where
+    parseOneOrMoreArgs' = (:) <$> parseExpressionRbp LOWEST <*> zeroOrMore (isToken Comma *> parseExpressionRbp LOWEST)
+
+parseZeroArgs :: AstParser [Expression]
+parseZeroArgs = isToken LParen *> isToken RParen *> pure []
 
 parseFunctionLiteral :: AstParser Expression
 parseFunctionLiteral = do
@@ -184,7 +203,7 @@ parseFunctionLiteral = do
   parameters <- parseParameters
   _ <- isToken LBrace
   stmts <- parseBlockStatement
-  -- Now extract the statements
+  _ <- isToken RBrace
   case stmts of
     BlockStatement stmts' ->
       return $ FunctionLit fn parameters stmts'
@@ -204,6 +223,7 @@ parseNud = do
         FalseLit -> parseBoolean
         Bang -> parseBangExpression
         Minus -> parseMinusExpression
+        Function -> parseFunctionLiteral
         _ -> newParserWithError ("Unexpected token in infix position: " ++ show tt) pos
 
 parseInfixExpression :: TokenType -> Expression -> AstParser Expression
@@ -224,6 +244,18 @@ parseMulInfixExpression = parseInfixExpression Asterisk
 parseDivInfixExpression :: Expression -> AstParser Expression
 parseDivInfixExpression = parseInfixExpression Slash
 
+parseEqualsInfixExpression :: Expression -> AstParser Expression
+parseEqualsInfixExpression = parseInfixExpression Equal
+
+parseNEqualsInfixExpression :: Expression -> AstParser Expression
+parseNEqualsInfixExpression = parseInfixExpression NotEqual
+
+parseLessThanInfixExpression :: Expression -> AstParser Expression
+parseLessThanInfixExpression = parseInfixExpression LessThan
+
+parserGreaterThanInfixExpression :: Expression -> AstParser Expression
+parserGreaterThanInfixExpression = parseInfixExpression GreaterThan
+
 traceParse :: String -> a -> a
 traceParse msg x = trace ("  " ++ msg) x
 
@@ -242,6 +274,11 @@ continueInfix precedence leftExpr = do
         Minus -> parseMinusInfixExpression leftExpr
         Asterisk -> parseMulInfixExpression leftExpr
         Slash -> parseDivInfixExpression leftExpr
+        Equal -> parseEqualsInfixExpression leftExpr
+        NotEqual -> parseNEqualsInfixExpression leftExpr
+        LessThan -> parseLessThanInfixExpression leftExpr
+        GreaterThan -> parserGreaterThanInfixExpression leftExpr
+        LParen -> parseCallExpression leftExpr
         _ -> newParserWithError ("Unexpected token in infix position: " ++ show tt) pos
       continueInfix precedence newExpr
     _ -> return leftExpr
@@ -261,18 +298,26 @@ parseReturnStatement = ReturnStatement <$> isToken Return <*> parseExpressionRbp
 parseExpressionStatement :: Token -> AstParser Statement
 parseExpressionStatement token = ExpressionStatement <$> pure token <*> parseExpressionRbp LOWEST <* optional (isToken Semicolon)
 
-parseStatement :: AstParser Statement
-parseStatement = do
+parseStatement :: TokenType -> AstParser (Maybe Statement)
+parseStatement endToken = do
   pTok <- peekToken
   case pTok of
     tok@(Token tt _) -> do
       case tt of
-        Let -> parseLetStatement
-        Return -> parseReturnStatement
-        _ -> parseExpressionStatement tok
+        Let -> fmap Just parseLetStatement
+        Return -> fmap Just parseReturnStatement
+        _ | tt == endToken -> pure Nothing
+        _ -> fmap Just (parseExpressionStatement tok)
 
 parseProgram :: AstParser Statement
-parseProgram = Program <$> oneOrMore parseStatement
+parseProgram = Program <$> parseStatementsUntil EOF
+
+parseStatementsUntil :: TokenType -> AstParser [Statement]
+parseStatementsUntil endToken = do
+  maybeStmt <- parseStatement endToken
+  case maybeStmt of
+    Nothing -> pure []
+    Just stmt -> (stmt :) <$> parseStatementsUntil endToken
 
 parseBlockStatement :: AstParser Statement
-parseBlockStatement = BlockStatement <$> oneOrMore parseStatement
+parseBlockStatement = BlockStatement <$> parseStatementsUntil RBrace

@@ -272,7 +272,7 @@ tokenizer = do
 tokenizer' :: Lexer Token
 tokenizer' = withPosition $ SimpleParser $ \state ->
   case getInput state of
-    [] -> Right (Token EOF (currentPosition state))
+    [] -> Right (EOF, state)
     c : cs
       | c == '"' -> runLexer stringLexer state
       | c == '!' -> runLexer specialDoubleCharSymbolsLexer state
@@ -290,12 +290,12 @@ nextToken = runLexer tokenizer
 
 tokenizerAll :: LexerState -> Either LexError [Token]
 tokenizerAll state = do
-  do
-    result <- runLexer tokenizer state
-    case result of
-      (token, newState) -> do
-        restTokens <- tokenizerAll newState
-        return (token : restTokens)
+  (token, newState) <- runLexer tokenizer state
+  if token ^. tokenType == EOF
+    then return [token] -- Stop, return just EOF
+    else do
+      restTokens <- tokenizerAll newState
+      return (token : restTokens)
 
 -- Helper
 toTokenType :: Either LexError [Token] -> Either LexError [TokenType]

@@ -7,7 +7,7 @@ import Ast (Expression (..), Statement (..), expressionToString, statementToStri
 import Control.Monad
 import Parser
 import Test.Hspec
-import Token (LexerState (..), Position (..), Token (..), TokenType (..))
+import Token (LexerState (..), Position (..), Token (..), TokenType (..), runLexer, tokenizer, tokenizerAll)
 
 initialState :: String -> LexerState
 initialState input = LexerState {getInput = input, currentPosition = Position {_line = 1, _column = 1}}
@@ -123,6 +123,69 @@ literalTest = do
           expectationFailure ("Parser failed: " ++ show err)
       Right (Program stmts, _) ->
         testExpressionStatementSpec (isFloatLitWith 3.10) (head stmts)
+  describe "function literal" $ do
+    let state = initialState "fn(x,y){5;}"
+    case runAstParser parseProgram state of
+      Left err ->
+        it "should parse successfully" $
+          expectationFailure ("Parser failed: " ++ show err)
+      Right (Program stmts, _) ->
+        it "should parse function literal correctly" $
+          case head stmts of
+            ExpressionStatement _ (FunctionLit _ parameters body) -> do
+              parameters
+                `shouldSatisfy` ( \ps ->
+                                    length ps == 2
+                                      && and (zipWith (?==) ps [IdentifierLit identityToken "x", IdentifierLit identityToken "y"])
+                                )
+              length body `shouldBe` 1
+              case head body of
+                ExpressionStatement _ expr ->
+                  expr `shouldSatisfy` isIntLitWithValue 5
+                _ -> expectationFailure "Expected ExpressionStatement in body"
+            _ -> expectationFailure "Expected FunctionLit"
+
+callExpr :: Spec
+callExpr = do
+  describe "parsing call expression" $ do
+    let state = initialState "call(x,y);"
+    case runAstParser parseProgram state of
+      Left err ->
+        it "should parse successfully" $
+          expectationFailure ("Parser failed: " ++ show err)
+      Right (Program stmts, _) ->
+        it "should parse function literal correctly" $
+          case head stmts of
+            ExpressionStatement _ (CallExpression _ function args) ->
+              case function of
+                IdentifierLit _ name -> do
+                  name `shouldBe` "call"
+                  args
+                    `shouldSatisfy` ( \ps ->
+                                        length ps == 2
+                                          && and (zipWith (?==) ps [IdentifierLit identityToken "x", IdentifierLit identityToken "y"])
+                                    )
+                _ -> expectationFailure "Expected IdentifierLit"
+            _ -> expectationFailure "Expected CallExpression"
+  describe "parsing call expression" $ do
+    let state = initialState "fn(x,y){5;}(x,y);"
+    case runAstParser parseProgram state of
+      Left err ->
+        it "should parse successfully" $
+          expectationFailure ("Parser failed: " ++ show err)
+      Right (Program stmts, _) ->
+        it "should parse function literal correctly" $
+          case head stmts of
+            ExpressionStatement _ (CallExpression _ function args) ->
+              case function of
+                FunctionLit _ _ _ -> do
+                  args
+                    `shouldSatisfy` ( \ps ->
+                                        length ps == 2
+                                          && and (zipWith (?==) ps [IdentifierLit identityToken "x", IdentifierLit identityToken "y"])
+                                    )
+                _ -> expectationFailure "Expected FunctionLit"
+            _ -> expectationFailure "Expected CallExpression"
 
 testLetStatementSpec :: String -> (Expression -> Bool) -> Statement -> Spec
 testLetStatementSpec expectedId exprPredicate parsedStatement = do
