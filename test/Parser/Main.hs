@@ -3,8 +3,9 @@
 
 module Main where
 
-import Ast (Expression (..), Statement (..), expressionToString, statementToString, (?==))
+import Ast (Expression (..), Statement (..), expressionToString, prettyPrintStatement, statementToString, (?==))
 import Control.Monad
+import Debug.Trace
 import Parser
 import Test.Hspec
 import Token (LexerState (..), Position (..), Token (..), TokenType (..), runLexer, tokenizer, tokenizerAll)
@@ -30,7 +31,8 @@ specOpPrecedence = do
             ("3 + 4; -5 * 5", "(3 + 4)((-5) * 5)"),
             ("5 > 4 == 3 < 4", "((5 > 4) == (3 < 4))"),
             ("5 < 4 != 3 > 4", "((5 < 4) != (3 > 4))"),
-            ("3 + 4 * 5 == 3 * 1 + 4 * 5", "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))")
+            ("3 + 4 * 5 == 3 * 1 + 4 * 5", "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))"),
+            ("(3 + 3) * 3", "((3 + 3) * 3)")
           ]
     forM_ testCases $ \(input, expectedString) -> do
       describe ("parsing: " ++ input) $ do
@@ -123,6 +125,22 @@ literalTest = do
           expectationFailure ("Parser failed: " ++ show err)
       Right (Program stmts, _) ->
         testExpressionStatementSpec (isFloatLitWith 3.10) (head stmts)
+  describe "array literal" $ do
+    let state = initialState "[10 ,  \"that\"]"
+    case runAstParser parseProgram state of
+      Left err ->
+        it "should parse successfully" $
+          expectationFailure ("Parser failed: " ++ show err)
+      Right (Program stmts, _) ->
+        it "should parse function literal correctly" $
+          case head stmts of
+            ExpressionStatement _ (ArrayLit _ elements) -> do
+              traceM (show elements)
+              elements
+                `shouldSatisfy` ( \ps ->
+                                    length ps == 2
+                                      && and (zipWith (?==) ps [IntLit identityToken 10, StringLit identityToken "that"])
+                                )
   describe "function literal" $ do
     let state = initialState "fn(x,y){5;}"
     case runAstParser parseProgram state of
@@ -178,7 +196,7 @@ callExpr = do
           case head stmts of
             ExpressionStatement _ (CallExpression _ function args) ->
               case function of
-                FunctionLit _ _ _ -> do
+                FunctionLit {} -> do
                   args
                     `shouldSatisfy` ( \ps ->
                                         length ps == 2
@@ -293,3 +311,9 @@ isMinusWithExpr _ _ = False
 
 identityToken :: Token
 identityToken = Token Illegal (Position 0 0)
+
+prettyTest :: String -> IO ()
+prettyTest input =
+  case runAstParser parseProgram (initialState input) of
+    Left err -> putStrLn $ "Parse Error: " ++ show err
+    Right (prog, _) -> putStrLn $ prettyPrintStatement 0 prog

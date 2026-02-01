@@ -8,6 +8,7 @@ module Ast
     Statement (..),
     (?==),
     Precedence (..),
+    prettyPrintStatement,
     expressionToString,
     statementToString,
     infixToPrecedence,
@@ -172,6 +173,119 @@ statementToString (ReturnStatement _ value) = "return " ++ expressionToString va
 statementToString (ExpressionStatement _ value) = expressionToString value
 statementToString (BlockStatement stmts) = intercalate "" (map statementToString stmts)
 statementToString (Program stmts) = intercalate "" (map statementToString stmts)
+
+prettyPrintStatement :: Int -> Statement -> String
+prettyPrintStatement indent stmt = case stmt of
+  LetStatement _ name value ->
+    spaces indent
+      ++ "LetStatement\n"
+      ++ spaces (indent + 2)
+      ++ "name: "
+      ++ expressionToString name
+      ++ "\n"
+      ++ spaces (indent + 2)
+      ++ "value:\n"
+      ++ prettyPrintExpression (indent + 4) value
+  ExpressionStatement _ expr ->
+    spaces indent
+      ++ "ExpressionStatement\n"
+      ++ prettyPrintExpression (indent + 2) expr
+  ReturnStatement _ expr ->
+    spaces indent
+      ++ "ReturnStatement\n"
+      ++ prettyPrintExpression (indent + 2) expr
+  BlockStatement stmts ->
+    spaces indent
+      ++ "BlockStatement\n"
+      ++ intercalate "" (map (prettyPrintStatement (indent + 2)) stmts)
+  Program stmts ->
+    "Program\n"
+      ++ intercalate "" (map (prettyPrintStatement 2) stmts)
+  where
+    spaces n = replicate n ' '
+
+prettyPrintExpression :: Int -> Expression -> String
+prettyPrintExpression indent expr = case expr of
+  IntLit _ value ->
+    spaces indent ++ "IntLit: " ++ show value ++ "\n"
+  FloatLit _ value ->
+    spaces indent ++ "FloatLit: " ++ show value ++ "\n"
+  StringLit _ value ->
+    spaces indent ++ "StringLit: " ++ show value ++ "\n"
+  IdentifierLit _ value ->
+    spaces indent ++ "IdentifierLit: " ++ value ++ "\n"
+  BooleanLit _ value ->
+    spaces indent ++ "BooleanLit: " ++ show value ++ "\n"
+  ArrayLit _ elements ->
+    spaces indent
+      ++ "ArrayLit\n"
+      ++ spaces (indent + 2)
+      ++ "elements:\n"
+      ++ intercalate "" (map (prettyPrintExpression (indent + 4)) elements)
+  PrefixExpression _ op right ->
+    spaces indent
+      ++ "PrefixExpression ("
+      ++ show op
+      ++ ")\n"
+      ++ spaces (indent + 2)
+      ++ "right:\n"
+      ++ prettyPrintExpression (indent + 4) right
+  InfixExpression _ left op right ->
+    spaces indent
+      ++ "InfixExpression ("
+      ++ show op
+      ++ ")\n"
+      ++ spaces (indent + 2)
+      ++ "left:\n"
+      ++ prettyPrintExpression (indent + 4) left
+      ++ spaces (indent + 2)
+      ++ "right:\n"
+      ++ prettyPrintExpression (indent + 4) right
+  FunctionLit _ params body ->
+    spaces indent
+      ++ "FunctionLit\n"
+      ++ spaces (indent + 2)
+      ++ "parameters: ["
+      ++ intercalate ", " (map expressionToString params)
+      ++ "]\n"
+      ++ spaces (indent + 2)
+      ++ "body:\n"
+      ++ intercalate "" (map (prettyPrintStatement (indent + 4)) body)
+  CallExpression _ func args ->
+    spaces indent
+      ++ "CallExpression\n"
+      ++ spaces (indent + 2)
+      ++ "function:\n"
+      ++ prettyPrintExpression (indent + 4) func
+      ++ spaces (indent + 2)
+      ++ "arguments:\n"
+      ++ intercalate "" (map (prettyPrintExpression (indent + 4)) args)
+  IndexExpression _ left idx ->
+    spaces indent
+      ++ "IndexExpression\n"
+      ++ spaces (indent + 2)
+      ++ "left:\n"
+      ++ prettyPrintExpression (indent + 4) left
+      ++ spaces (indent + 2)
+      ++ "index:\n"
+      ++ prettyPrintExpression (indent + 4) idx
+  IfExpression _ condition consequence alternative ->
+    spaces indent
+      ++ "IfExpression\n"
+      ++ spaces (indent + 2)
+      ++ "condition:\n"
+      ++ prettyPrintExpression (indent + 4) condition
+      ++ spaces (indent + 2)
+      ++ "consequence:\n"
+      ++ intercalate "" (map (prettyPrintStatement (indent + 4)) consequence)
+      ++ case alternative of
+        Nothing -> ""
+        Just alt ->
+          spaces (indent + 2)
+            ++ "alternative:\n"
+            ++ intercalate "" (map (prettyPrintStatement (indent + 4)) alt)
+  where
+    spaces n = replicate n ' '
 
 expressionToString :: Expression -> String
 expressionToString (IntLit _ val) = show val

@@ -187,15 +187,24 @@ parseZeroParameters :: AstParser [Expression]
 parseZeroParameters = isToken LParen *> isToken RParen *> pure []
 
 parseArgs :: AstParser [Expression]
-parseArgs = choice [parseZeroArgs, parseOneOrMoreArgs]
+parseArgs = isToken LParen *> choice [parseZeroExprs RParen, parseOneOrMoreExprs RParen]
 
-parseOneOrMoreArgs :: AstParser [Expression]
-parseOneOrMoreArgs = isToken LParen *> parseOneOrMoreArgs' <* isToken RParen
+parseArrayElements :: AstParser [Expression]
+parseArrayElements = choice [parseZeroExprs RBracket, parseOneOrMoreExprs RBracket]
+
+parseDelimitedExprs :: TokenType -> AstParser [Expression]
+parseDelimitedExprs end = choice [parseOneOrMoreExprs end, parseZeroExprs end]
+
+parseOneOrMoreExprs :: TokenType -> AstParser [Expression]
+parseOneOrMoreExprs end = parseOneOrMoreArgs' <* isToken end
   where
     parseOneOrMoreArgs' = (:) <$> parseExpressionRbp LOWEST <*> zeroOrMore (isToken Comma *> parseExpressionRbp LOWEST)
 
-parseZeroArgs :: AstParser [Expression]
-parseZeroArgs = isToken LParen *> isToken RParen *> pure []
+parseZeroExprs :: TokenType -> AstParser [Expression]
+parseZeroExprs end = isToken end *> pure []
+
+parseArrayLiteral :: AstParser Expression
+parseArrayLiteral = ArrayLit <$> isToken LBracket <*> parseArrayElements
 
 parseFunctionLiteral :: AstParser Expression
 parseFunctionLiteral = do
@@ -219,11 +228,13 @@ parseNud = do
         IntLiteral _ -> parseLiteralExpression
         StringLiteral _ -> parseLiteralExpression
         FloatLiteral _ -> parseLiteralExpression
+        LBracket -> parseArrayLiteral
         TrueLit -> parseBoolean
         FalseLit -> parseBoolean
         Bang -> parseBangExpression
         Minus -> parseMinusExpression
         Function -> parseFunctionLiteral
+        LParen -> parseGroupExpression
         _ -> newParserWithError ("Unexpected token in infix position: " ++ show tt) pos
 
 parseInfixExpression :: TokenType -> Expression -> AstParser Expression

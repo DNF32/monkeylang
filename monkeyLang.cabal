@@ -63,6 +63,7 @@ library
                     Token
                     Ast
                     Parser
+                    Eval
     -- Modules included in this library but not exported.
     other-modules: SimpleParser
 
