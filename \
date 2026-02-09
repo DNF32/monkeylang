@@ -20,7 +20,7 @@ data EvalError
   | UndefinedVariable {errorPos :: Position, varName :: String}
   | DivisionByZero {errorPos :: Position}
   | ParseError {errorPos :: Position, message :: String} -- NEW
-  deriving (Show, Eq)
+  deriving (Show)
 
 data Object
   = IntObj Integer
@@ -77,8 +77,8 @@ evalProgram :: Statement -> Eval Object
 evalProgram (Program stmts) = evalProgram' stmts
   where
     evalProgram' :: [Statement] -> Eval Object
-    evalProgram' [] = return nullObj
-    evalProgram' [s] = case s of
+    evalProgram' [] = return nullObj -- Empty program returns null
+    evalProgram' [s] = case s of -- Last statement determines result
       LetStatement {} -> evalLetStatement s
       ReturnStatement {} -> evalReturnStatement s
       ExpressionStatement {} -> evalExpressionStatement s
@@ -86,14 +86,13 @@ evalProgram (Program stmts) = evalProgram' stmts
     evalProgram' (s1 : ss) = do
       case s1 of
         LetStatement {} -> do
-          _ <- evalLetStatement s1
+          _ <- evalLetStatement s1 -- Discard result, continue
           evalProgram' ss
-        ReturnStatement {} -> evalReturnStatement s1
+        ReturnStatement {} -> evalReturnStatement s1 -- This stops execution
         ExpressionStatement {} -> do
-          _ <- evalExpressionStatement s1
+          _ <- evalExpressionStatement s1 -- Evaluate but discard result (not last)
           evalProgram' ss
-        _ -> return nullObj
-evalProgram _ = undefined
+        _ -> return nullObj -- For unhandled statements
 
 evalLetStatement :: Statement -> Eval Object
 evalLetStatement (LetStatement _ (IdentifierLit _ name) value) = do

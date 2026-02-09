@@ -139,7 +139,7 @@ literalTest = do
               elements
                 `shouldSatisfy` ( \ps ->
                                     length ps == 2
-                                      && and (zipWith (?==) ps [IntLit identityToken 10, StringLit identityToken "that"])
+                                      && and (zipWith (?==) ps [IntLit identityToken 10, StringLit identityToken "\"that\""])
                                 )
   describe "function literal" $ do
     let state = initialState "fn(x,y){5;}"
