@@ -5,6 +5,7 @@ module Parser where
 import Ast (Expression (..), Precedence (..), Statement (..), exprToken, infixToPrecedence)
 import Control.Applicative (Alternative (..))
 import Control.Lens
+import Data.List (intercalate)
 import Debug.Trace
 import SimpleParser
 import Token
@@ -235,6 +236,7 @@ parseNud = do
         Minus -> parseMinusExpression
         Function -> parseFunctionLiteral
         LParen -> parseGroupExpression
+        If -> parseIfExpression
         _ -> newParserWithError ("Unexpected token in infix position: " ++ show tt) pos
 
 parseInfixExpression :: TokenType -> Expression -> AstParser Expression
@@ -332,3 +334,26 @@ parseStatementsUntil endToken = do
 
 parseBlockStatement :: AstParser Statement
 parseBlockStatement = BlockStatement <$> parseStatementsUntil RBrace
+
+parseIfExpression :: AstParser Expression
+parseIfExpression = do
+  ifTok <- isToken If
+  condition <- parseGroupExpression
+
+  _ <- isToken LBrace
+  consequence <- parseStatementsUntil RBrace
+  _ <- isToken RBrace
+
+  alternative <- do
+    pTok <- peekToken
+    case pTok of
+      Token Else _ -> do
+        _ <- isToken Else
+        _ <- isToken LBrace
+        alt <- parseStatementsUntil RBrace
+        _ <- isToken RBrace
+        return (Just alt)
+      _ ->
+        return Nothing
+
+  return (IfExpression ifTok condition consequence alternative)

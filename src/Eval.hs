@@ -29,6 +29,7 @@ data Object
   | StringObj String
   | FunctionObj [Expression] [Statement] Enviroment
   | NullObj
+  | ReturnObj Object
   | ErrorObj EvalError
   deriving (Show, Eq)
 
@@ -75,34 +76,78 @@ initialEnv = put newEnv
 
 evalProgram :: Statement -> Eval Object
 evalProgram (Program stmts) = evalProgram' stmts
-  where
-    evalProgram' :: [Statement] -> Eval Object
-    evalProgram' [] = return nullObj
-    evalProgram' [s] = case s of
-      LetStatement {} -> evalLetStatement s
-      ReturnStatement {} -> evalReturnStatement s
-      ExpressionStatement {} -> evalExpressionStatement s
-      _ -> return nullObj
-    evalProgram' (s1 : ss) = do
-      case s1 of
-        LetStatement {} -> do
-          _ <- evalLetStatement s1
-          evalProgram' ss
-        ReturnStatement {} -> evalReturnStatement s1
-        ExpressionStatement {} -> do
-          _ <- evalExpressionStatement s1
-          evalProgram' ss
-        _ -> return nullObj
 evalProgram _ = undefined
+
+evalProgram' :: [Statement] -> Eval Object
+evalProgram' [] = return nullObj
+evalProgram' [s] = case s of
+  LetStatement {} -> evalLetStatement s
+  ReturnStatement {} -> evalReturnStatement s
+  ExpressionStatement {} -> do
+    obj <- evalExpressionStatement s
+    case obj of
+      ReturnObj wrappedValue -> return wrappedValue
+      _ -> return obj
+  _ -> return nullObj
+evalProgram' (s1 : ss) = do
+  case s1 of
+    LetStatement {} -> do
+      _ <- evalLetStatement s1
+      evalProgram' ss
+    ReturnStatement {} -> evalReturnStatement s1
+    ExpressionStatement {} -> do
+      obj <- evalExpressionStatement s1
+      case obj of
+        ReturnObj wrappedValue -> return wrappedValue
+        ErrorObj _ -> return obj
+        _ -> evalProgram' ss
+    _ -> return nullObj
+
+evalBlockStatement :: [Statement] -> Eval Object
+evalBlockStatement [] = return nullObj
+evalBlockStatement [s] = case s of
+  LetStatement {} -> evalLetStatement s
+  ReturnStatement {} -> evalReturnStatement s
+  ExpressionStatement {} -> do
+    obj <- evalExpressionStatement s
+    case obj of
+      ReturnObj _ -> return obj
+      ErrorObj _ -> return obj
+      _ -> return nullObj
+  _ -> return nullObj
+evalBlockStatement (s1 : ss) = do
+  case s1 of
+    LetStatement {} -> do
+      _ <- evalLetStatement s1
+      evalBlockStatement ss
+    ReturnStatement {} -> evalReturnStatement s1
+    ExpressionStatement {} -> do
+      obj <- evalExpressionStatement s1
+      case obj of
+        ReturnObj _ -> return obj
+        ErrorObj _ -> return obj
+        _ -> evalBlockStatement ss
+    _ -> return nullObj
 
 evalLetStatement :: Statement -> Eval Object
 evalLetStatement (LetStatement _ (IdentifierLit _ name) value) = do
   obj <- evalExpression value
-  setObject name obj
-  return obj
+  case obj of
+    ReturnObj wrappedValue -> do
+      setObject name wrappedValue
+      return (ReturnObj wrappedValue)
+    ErrorObj _ -> return obj
+    _ -> do
+      setObject name obj
+      return obj
 
 evalReturnStatement :: Statement -> Eval Object
-evalReturnStatement (ReturnStatement _ expr) = evalExpression expr
+evalReturnStatement (ReturnStatement _ expr) = do
+  obj <- evalExpression expr
+  case obj of
+    ReturnObj _ -> return obj
+    ErrorObj _ -> return obj
+    _ -> return (ReturnObj obj)
 
 evalExpressionStatement :: Statement -> Eval Object
 evalExpressionStatement (ExpressionStatement _ expr) = evalExpression expr
@@ -113,12 +158,23 @@ evalExpression (FloatLit _ floatValue) = return (FloatObj floatValue)
 evalExpression (StringLit _ stringValue) = return (StringObj stringValue)
 evalExpression (BooleanLit _ value) =
   return (if value then trueObj else falseObj)
+evalExpression (IfExpression tok condition consequence alternative) = do
+  conditionObj <- evalExpression condition
+  obj <- case isTruthy conditionObj of
+    True -> evalBlockStatement consequence
+    False -> case alternative of
+      Just stmts -> evalBlockStatement stmts
+      Nothing -> return nullObj
+  case obj of
+    ReturnObj _ -> return obj
+    ErrorObj _ -> return obj
 evalExpression (PrefixExpression _ operator right) = do
   rightSide <- evalExpression right
   let obj = case (operator, rightSide) of
-        (Bang, IntObj value) -> if value == 0 then falseObj else trueObj
-        (Bang, FloatObj _) -> falseObj
+        (Bang, IntObj value) -> if value == 0 then trueObj else falseObj
+        (Bang, FloatObj _) -> trueObj
         (Bang, StringObj value) -> if value == "" then trueObj else falseObj
+        (Bang, BoolObj v1) -> if v1 then falseObj else trueObj
         (Minus, IntObj value) -> IntObj (-value)
         (Minus, FloatObj value) -> FloatObj (-value)
         (_, _) -> ErrorObj (TypeError (right ^. exprToken . tokenPosition) ("Prefix operation not supported, value at" ++ expressionToString right ++ "not supported"))
@@ -182,8 +238,9 @@ evalEquals pos left right = case (left, right) of
   (IntObj v1, FloatObj v2) -> if fromIntegral v1 == v2 then trueObj else falseObj
   (FloatObj v1, IntObj v2) -> if v1 == fromIntegral v2 then trueObj else falseObj
   (StringObj v1, StringObj v2) -> if v1 == v2 then trueObj else falseObj
+  (BoolObj v1, BoolObj v2) -> if v1 == v2 then trueObj else falseObj
   (NullObj, NullObj) -> trueObj
-  _ -> ErrorObj (TypeError pos ("Equals failed: equality comparison returned non-boolean" ++ objectToString left ++ " == " ++ objectToString right))
+  _ -> ErrorObj (TypeError pos ("Equals failed: equality comparison returned non-boolean " ++ objectToString left ++ " == " ++ objectToString right))
 
 evalNotEquals :: Position -> Object -> Object -> Object
 evalNotEquals pos left right = case evalEquals pos left right of
@@ -206,3 +263,11 @@ evalGreaterThan pos left right = case (left, right) of
   (IntObj v1, FloatObj v2) -> if fromIntegral v1 > v2 then trueObj else falseObj
   (FloatObj v1, IntObj v2) -> if v1 > fromIntegral v2 then trueObj else falseObj
   (_, _) -> ErrorObj (TypeError pos ("GreaterThan operator only supports numbers: " ++ objectToString left ++ " > " ++ objectToString right))
+
+isTruthy :: Object -> Bool
+isTruthy obj = case obj of
+  NullObj -> False
+  BoolObj True -> True
+  BoolObj False -> False
+  IntObj v1 -> v1 /= 0
+  _ -> False
