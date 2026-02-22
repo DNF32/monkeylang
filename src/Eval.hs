@@ -4,7 +4,8 @@ import Ast (Expression (..), Statement (..), exprToken, expressionToString)
 import Control.Lens
 import Control.Monad.State
 import Data.Map qualified as Map
-import Parser (AstParserError (..), ParserError (..))
+import Debug.Trace
+import Parser (AstParserError (..), ParserError (..), parseProgram, runAstParser)
 import Token
 
 emptyMap :: Map.Map k v
@@ -20,6 +21,8 @@ data EvalError
   | UndefinedVariable {errorPos :: Position, varName :: String}
   | DivisionByZero {errorPos :: Position}
   | ParseError {errorPos :: Position, message :: String} -- NEW
+  | InvalidFunctionParameter {errorPos :: Position}
+  | InvalidFunctionCall {errorPos :: Position}
   deriving (Show, Eq)
 
 data Object
@@ -33,8 +36,16 @@ data Object
   | ErrorObj EvalError
   deriving (Show, Eq)
 
+interpreter :: String -> Object
+interpreter program =
+  let initialLexerState = initialState program
+   in case runAstParser parseProgram initialLexerState of
+        Right (prog, _) -> fst $ runState (evalProgram prog) newEnv
+        Left parseErr -> ErrorObj (astParserErrorToEvalError parseErr)
+
 --
 -- Convert AstParserError to EvalError
+-- INFO: Why do we need this ? Because the errors will bubble up?
 astParserErrorToEvalError :: AstParserError -> EvalError
 astParserErrorToEvalError (TokenError (LexError msg pos)) =
   ParseError pos msg
@@ -47,6 +58,7 @@ objectToString (BoolObj v) = if v then "true" else "false"
 objectToString (FloatObj v) = show v
 objectToString (StringObj v) = "\"" ++ v ++ "\""
 objectToString (FunctionObj params _ _) = "fn(" ++ show (length params) ++ " params)"
+objectToString (ReturnObj obj) = objectToString obj
 objectToString NullObj = "null"
 objectToString (ErrorObj err) = "ERROR: " ++ show err
 
@@ -132,14 +144,16 @@ evalBlockStatement (s1 : ss) = do
 evalLetStatement :: Statement -> Eval Object
 evalLetStatement (LetStatement _ (IdentifierLit _ name) value) = do
   obj <- evalExpression value
-  case obj of
-    ReturnObj wrappedValue -> do
-      setObject name wrappedValue
-      return (ReturnObj wrappedValue)
-    ErrorObj _ -> return obj
-    _ -> do
-      setObject name obj
-      return obj
+  trace ("LetStatement: evaluated " ++ name ++ " = " ++ objectToString obj) $ do
+    case obj of
+      ReturnObj wrappedValue -> do
+        setObject name wrappedValue
+        return (ReturnObj wrappedValue)
+      ErrorObj _ -> return obj
+      _ -> do
+        setObject name obj
+        trace ("LetStatement: bound " ++ name ++ " = " ++ objectToString obj) $
+          return obj
 
 evalReturnStatement :: Statement -> Eval Object
 evalReturnStatement (ReturnStatement _ expr) = do
@@ -158,6 +172,11 @@ evalExpression (FloatLit _ floatValue) = return (FloatObj floatValue)
 evalExpression (StringLit _ stringValue) = return (StringObj stringValue)
 evalExpression (BooleanLit _ value) =
   return (if value then trueObj else falseObj)
+evalExpression (IdentifierLit tok name) = do
+  maybeObj <- getObject name
+  case maybeObj of
+    Just obj -> return obj
+    Nothing -> return (ErrorObj (UndefinedVariable (tok ^. tokenPosition) name))
 evalExpression (IfExpression tok condition consequence alternative) = do
   conditionObj <- evalExpression condition
   obj <- case isTruthy conditionObj of
@@ -183,18 +202,73 @@ evalExpression (InfixExpression tok left operator right) = do
   leftSide <- evalExpression left
   rightSide <- evalExpression right
 
+  let unwrap (ReturnObj o) = o
+      unwrap o = o
+  let leftSide' = unwrap leftSide
+      rightSide' = unwrap rightSide
+
   let pos = tok ^. tokenPosition -- Get position from the infix expression itself
   let obj = case operator of
-        Plus -> evalSum pos leftSide rightSide
-        Minus -> evalMinus pos leftSide rightSide
-        Asterisk -> evalProduct pos leftSide rightSide
-        Slash -> evalDivide pos leftSide rightSide
-        Equal -> evalEquals pos leftSide rightSide
-        NotEqual -> evalNotEquals pos leftSide rightSide
-        LessThan -> evalLessThan pos leftSide rightSide
-        GreaterThan -> evalGreaterThan pos leftSide rightSide
+        Plus -> evalSum pos leftSide' rightSide'
+        Minus -> evalMinus pos leftSide' rightSide'
+        Asterisk -> evalProduct pos leftSide' rightSide'
+        Slash -> evalDivide pos leftSide' rightSide'
+        Equal -> evalEquals pos leftSide' rightSide'
+        NotEqual -> evalNotEquals pos leftSide' rightSide'
+        LessThan -> evalLessThan pos leftSide' rightSide'
+        GreaterThan -> evalGreaterThan pos leftSide' rightSide'
   return obj
-evalExpression _ = undefined
+evalExpression (FunctionLit tok parameters body) = do
+  if all isIdentifierLit parameters
+    then do
+      env <- get
+      return (FunctionObj parameters body env)
+    else
+      return (ErrorObj (InvalidFunctionParameter (tok ^. tokenPosition)))
+evalExpression (CallExpression tok (IdentifierLit _ funcName) args) = do
+  maybeFunc <- getObject funcName
+  case maybeFunc of
+    Just (FunctionObj params body env) -> do
+      trace ("CallExpression: found function with params = " ++ show (length params) ++ " args = " ++ show (length args)) $ do
+        if length params /= length args
+          then return (ErrorObj (InvalidFunctionCall (tok ^. tokenPosition)))
+          else do
+            evaluatedArgs <- mapM evalExpression args
+            if any isError evaluatedArgs
+              then return (head (filter isError evaluatedArgs))
+              else do
+                let extendedEnv = Map.union (Map.fromList [(name, obj) | (IdentifierLit _ name, obj) <- zip params evaluatedArgs]) env
+                oldEnv <- get
+                put extendedEnv
+                result <- evalBlockStatement body
+                put oldEnv
+                return result
+    _ -> do
+      trace ("CallExpression: could not find function, maybeFunc = " ++ show maybeFunc) $
+        return (ErrorObj (InvalidFunctionParameter (tok ^. tokenPosition)))
+evalExpression (CallExpression tok (FunctionLit _ params body) args) = do
+  if length params /= length args
+    then return (ErrorObj (InvalidFunctionCall (tok ^. tokenPosition)))
+    else do
+      evaluatedArgs <- mapM evalExpression args
+      if any isError evaluatedArgs
+        then return (head (filter isError evaluatedArgs))
+        else do
+          oldEnv <- get
+          let extendedEnv = Map.union (Map.fromList [(name, obj) | (IdentifierLit _ name, obj) <- zip params evaluatedArgs]) oldEnv
+          put extendedEnv
+          result <- evalBlockStatement body
+          put oldEnv
+          return result
+evalExpression expr = return (ErrorObj (TypeError (expr ^. exprToken . tokenPosition) ("Unhandled expression: " ++ show (expr))))
+
+isError :: Object -> Bool
+isError (ErrorObj _) = True
+isError _ = False
+
+isIdentifierLit :: Expression -> Bool
+isIdentifierLit (IdentifierLit _ _) = True
+isIdentifierLit _ = False
 
 evalSum :: Position -> Object -> Object -> Object
 evalSum pos left right = case (left, right) of

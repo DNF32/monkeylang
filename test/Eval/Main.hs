@@ -30,7 +30,7 @@ parserHelper :: String -> String
 parserHelper program =
   let state = initialState program
    in case runAstParser parseProgram state of
-        Right (prog, _) -> show prog
+        Right (prog, _) -> prettyPrintStatement 0 prog
         Left parseErr -> show parseErr
 
 testIntegerObj :: Spec
@@ -130,6 +130,18 @@ testReturnStatement = do
             ("let f = fn(x) {\n   let result = x + 10;\n   return result;\n   return 10;\n};\nf(10);", 20)
           ]
 
+    forM_ testCases $ \(input, expectedValue) -> do
+      describe ("parsing: " ++ input) $ do
+        it ("It should have value " ++ show expectedValue) $ do
+          evalHelper input `shouldBe` IntObj expectedValue
+
+testClosures :: Spec
+testClosures = do
+  describe "closures" $ do
+    let testCases :: [(String, Integer)]
+        testCases =
+          [ ("let f = fn(x) { return fn(y) { return x + y } }; let adder = f(10); adder(5);", 15)
+          ]
     forM_ testCases $ \(input, expectedValue) -> do
       describe ("parsing: " ++ input) $ do
         it ("It should have value " ++ show expectedValue) $ do

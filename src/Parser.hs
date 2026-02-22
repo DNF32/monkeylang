@@ -170,7 +170,7 @@ parseGroupExpression = isToken LParen *> parseExpressionRbp LOWEST <* isToken RP
 
 parseCallExpression :: Expression -> AstParser Expression
 parseCallExpression expr@(IdentifierLit tok _) = CallExpression tok expr <$> parseArgs
-parseCallExpression expr@(FunctionLit tok parameters _) = CallExpression tok expr <$> parseArgs
+parseCallExpression expr@(FunctionLit tok _ _) = CallExpression tok expr <$> parseArgs
 parseCallExpression expr =
   newParserWithError
     ("Tried to create a Call expression without IdentifierLit or Function Lit, found :" ++ show (expr ^. exprToken . tokenType))

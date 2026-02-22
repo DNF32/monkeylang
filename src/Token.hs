@@ -45,6 +45,7 @@ data TokenType
   | If -- Remove String: always "if"
   | Else -- Remove String: always "else"
   | Return -- Remove String: always "return"
+  | Null
   | Escaped Char -- Keep?: depends on what this is for
   deriving (Eq, Show)
 
@@ -96,6 +97,9 @@ type Lexer a = SimpleParser LexerState LexError a
 
 runLexer :: Lexer a -> LexerState -> Either LexError (a, LexerState)
 runLexer = run
+
+initialState :: String -> LexerState
+initialState input = LexerState {getInput = input, currentPosition = Position {_line = 1, _column = 1}}
 
 -- Basic Combinators
 
@@ -224,7 +228,8 @@ keywords =
     ("false", FalseLit),
     ("if", If),
     ("else", Else),
-    ("return", Return)
+    ("return", Return),
+    ("null", Null)
   ]
 
 lookupIdent :: String -> TokenType
