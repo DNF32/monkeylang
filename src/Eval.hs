@@ -153,7 +153,14 @@ evalLetStatement (LetStatement _ (IdentifierLit _ name) value) = do
       _ -> do
         setObject name obj
         trace ("LetStatement: bound " ++ name ++ " = " ++ objectToString obj) $
-          return obj
+          case obj of
+            FunctionObj params body capturedEnv -> do
+              let selfEnv = Map.insert name (FunctionObj params body selfEnv) capturedEnv
+              trace ("LetStatement: selfEnv has " ++ name ++ "? " ++ show (Map.member name selfEnv)) $ do
+                let updatedObj = FunctionObj params body selfEnv
+                setObject name updatedObj
+                return updatedObj
+            _ -> return obj
 
 evalReturnStatement :: Statement -> Eval Object
 evalReturnStatement (ReturnStatement _ expr) = do
@@ -187,6 +194,7 @@ evalExpression (IfExpression tok condition consequence alternative) = do
   case obj of
     ReturnObj _ -> return obj
     ErrorObj _ -> return obj
+    _ -> return obj
 evalExpression (PrefixExpression _ operator right) = do
   rightSide <- evalExpression right
   let obj = case (operator, rightSide) of
@@ -229,23 +237,22 @@ evalExpression (CallExpression tok (IdentifierLit _ funcName) args) = do
   maybeFunc <- getObject funcName
   case maybeFunc of
     Just (FunctionObj params body env) -> do
-      trace ("CallExpression: found function with params = " ++ show (length params) ++ " args = " ++ show (length args)) $ do
-        if length params /= length args
-          then return (ErrorObj (InvalidFunctionCall (tok ^. tokenPosition)))
-          else do
-            evaluatedArgs <- mapM evalExpression args
-            if any isError evaluatedArgs
-              then return (head (filter isError evaluatedArgs))
-              else do
-                let extendedEnv = Map.union (Map.fromList [(name, obj) | (IdentifierLit _ name, obj) <- zip params evaluatedArgs]) env
-                oldEnv <- get
-                put extendedEnv
-                result <- evalBlockStatement body
-                put oldEnv
-                return result
+      if length params /= length args
+        then return (ErrorObj (InvalidFunctionCall (tok ^. tokenPosition)))
+        else do
+          evaluatedArgs <- mapM evalExpression args
+          let unwrapedArgs = map unwrapReturnObj evaluatedArgs
+          if any isError evaluatedArgs
+            then return (head (filter isError unwrapedArgs))
+            else do
+              let extendedEnv = Map.union (Map.fromList [(name, obj) | (IdentifierLit _ name, obj) <- zip params unwrapedArgs]) env
+              oldEnv <- get
+              put extendedEnv
+              result <- evalBlockStatement body
+              put oldEnv
+              return result
     _ -> do
-      trace ("CallExpression: could not find function, maybeFunc = " ++ show maybeFunc) $
-        return (ErrorObj (InvalidFunctionParameter (tok ^. tokenPosition)))
+      return (ErrorObj (InvalidFunctionParameter (tok ^. tokenPosition)))
 evalExpression (CallExpression tok (FunctionLit _ params body) args) = do
   if length params /= length args
     then return (ErrorObj (InvalidFunctionCall (tok ^. tokenPosition)))
@@ -260,11 +267,49 @@ evalExpression (CallExpression tok (FunctionLit _ params body) args) = do
           result <- evalBlockStatement body
           put oldEnv
           return result
+evalExpression (CallExpression tok call@(CallExpression _ _ _) outerArgs) = do
+  maybeFunc <- evalExpression call
+  case maybeFunc of
+    FunctionObj params body env -> do
+      if length params /= length outerArgs
+        then return (ErrorObj (InvalidFunctionCall (tok ^. tokenPosition)))
+        else do
+          evaluatedArgs <- mapM evalExpression outerArgs
+          let unwrapedArgs = map unwrapReturnObj evaluatedArgs
+          if any isError unwrapedArgs
+            then return (head (filter isError unwrapedArgs))
+            else do
+              let extendedEnv = Map.union (Map.fromList [(name, obj) | (IdentifierLit _ name, obj) <- zip params unwrapedArgs]) env
+              oldEnv <- get
+              put extendedEnv
+              result <- evalBlockStatement body
+              put oldEnv
+              return result
+    ReturnObj (FunctionObj params body env) -> do
+      if length params /= length outerArgs
+        then return (ErrorObj (InvalidFunctionCall (tok ^. tokenPosition)))
+        else do
+          evaluatedArgs <- mapM evalExpression outerArgs
+          let unwrapedArgs = map unwrapReturnObj evaluatedArgs
+          if any isError unwrapedArgs
+            then return (head (filter isError unwrapedArgs))
+            else do
+              let extendedEnv = Map.union (Map.fromList [(name, obj) | (IdentifierLit _ name, obj) <- zip params unwrapedArgs]) env
+              oldEnv <- get
+              put extendedEnv
+              result <- evalBlockStatement body
+              put oldEnv
+              return result
+    _ -> return nullObj
 evalExpression expr = return (ErrorObj (TypeError (expr ^. exprToken . tokenPosition) ("Unhandled expression: " ++ show (expr))))
 
 isError :: Object -> Bool
 isError (ErrorObj _) = True
 isError _ = False
+
+unwrapReturnObj :: Object -> Object
+unwrapReturnObj (ReturnObj obj) = obj
+unwrapReturnObj obj = obj
 
 isIdentifierLit :: Expression -> Bool
 isIdentifierLit (IdentifierLit _ _) = True

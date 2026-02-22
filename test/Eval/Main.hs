@@ -96,11 +96,11 @@ testIfElse = do
   describe "bool objects" $ do
     let testCases :: [(String, Integer)]
         testCases =
-          [ ("if (true) { 10 }", 10),
-            ("if (1) { 10 }", 10),
-            ("if (1 < 2) { 10 }", 10),
-            ("if (1 > 2) { 10 } else { 20 }", 20),
-            ("if (1 < 2) { 10 } else { 20 }", 10)
+          [ ("if (true) { return 10 }", 10),
+            ("if (1) { return 10 }", 10),
+            ("if (1 < 2) { return 10 }", 10),
+            ("if (1 > 2) { return 10 } else { return 20 }", 20),
+            ("if (1 < 2) { return 10 } else { return 20 }", 10)
           ]
 
     forM_ testCases $ \(input, expectedValue) -> do
@@ -111,7 +111,8 @@ testIfElse = do
   describe "nil cases" $ do
     let testCases :: [(String, Object)]
         testCases =
-          [ ("if (1 > 2) { 10 }", NullObj)
+          [ ("if (1 > 2) { 10 }", NullObj),
+            ("if (false) { 10 }", NullObj)
           ]
 
     forM_ testCases $ \(input, expectedValue) -> do
@@ -141,6 +142,22 @@ testClosures = do
     let testCases :: [(String, Integer)]
         testCases =
           [ ("let f = fn(x) { return fn(y) { return x + y } }; let adder = f(10); adder(5);", 15)
+          ]
+    forM_ testCases $ \(input, expectedValue) -> do
+      describe ("parsing: " ++ input) $ do
+        it ("It should have value " ++ show expectedValue) $ do
+          evalHelper input `shouldBe` IntObj expectedValue
+
+testFunctionApplication :: Spec
+testFunctionApplication = do
+  describe "Function application" $ do
+    let testCases :: [(String, Integer)]
+        testCases =
+          [ ("let identity = fn(x) { return x; }; identity(5);", 5),
+            ("let double = fn(x) { return x * 2; }; double(5);", 10),
+            ("let add = fn(x, y) { return x + y; }; add(5, 5);", 10),
+            ("let add = fn(x, y) { return x + y; }; add(5 + 5, add(5, 5));", 20),
+            ("fn(x) { return x; }(5)", 5)
           ]
     forM_ testCases $ \(input, expectedValue) -> do
       describe ("parsing: " ++ input) $ do

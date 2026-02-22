@@ -1,0 +1,23 @@
+let map = fn(arr, f) {
+  if (arr == null) {
+    return null;
+  }
+  return f(arr);
+};
+
+let compose = fn(f, g) {
+  return fn(x) { return f(g(x)); };
+};
+
+let addOne = fn(x) { return x + 1; };
+let double = fn(x) { return x * 2; };
+let square = fn(x) { return x * x; };
+
+let addOneThenDouble = compose(double, addOne);
+let doubleThenSquare = compose(square, double);
+
+let a = addOneThenDouble(5);
+let b = doubleThenSquare(3);
+let c = compose(double, compose(addOne, square))(2);
+
+a + b + c;

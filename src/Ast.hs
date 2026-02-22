@@ -51,6 +51,7 @@ data Expression
   | IdentifierLit {token :: Token, name :: String}
   | ArrayLit {token :: Token, elements :: [Expression]}
   | BooleanLit {token :: Token, value :: Bool}
+  | NullLit {token :: Token}
   | PrefixExpression {token :: Token, operator :: Operator, right :: Expression}
   | InfixExpression {token :: Token, left :: Expression, operator :: Operator, right :: Expression}
   | FunctionLit {token :: Token, parameters :: [Expression], body :: [Statement]} -- Expression!
@@ -212,6 +213,8 @@ prettyPrintExpression indent expr = case expr of
     spaces indent ++ "FloatLit: " ++ show value ++ "\n"
   StringLit _ value ->
     spaces indent ++ "StringLit: " ++ show value ++ "\n"
+  NullLit _ ->
+    spaces indent ++ "NullLit\n"
   IdentifierLit _ value ->
     spaces indent ++ "IdentifierLit: " ++ value ++ "\n"
   BooleanLit _ value ->
