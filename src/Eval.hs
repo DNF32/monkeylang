@@ -17,13 +17,18 @@ type Eval a = State Enviroment a
 
 -- Errors track position
 data EvalError
-  = TypeError {errorPos :: Position, message :: String}
-  | UndefinedVariable {errorPos :: Position, varName :: String}
-  | DivisionByZero {errorPos :: Position}
-  | ParseError {errorPos :: Position, message :: String} -- NEW
-  | InvalidFunctionParameter {errorPos :: Position}
-  | InvalidFunctionCall {errorPos :: Position}
+  = TypeError {message :: String, pos :: Maybe Position}
+  | UndefinedVariable {varName :: String, pos :: Maybe Position}
+  | DivisionByZero {pos :: Maybe Position}
+  | ParseError {message :: String, pos :: Maybe Position} -- NEW
+  | InvalidFunctionParameter {pos :: Maybe Position}
+  | InvalidFunctionCall {pos :: Maybe Position}
+  | UndefinedFunction {varName :: String, pos :: Maybe Position}
   deriving (Show, Eq)
+
+withPos :: Position -> Object -> Object
+withPos p (ErrorObj err) = ErrorObj (err {pos = Just p})
+withPos _ obj = obj
 
 data Object
   = IntObj Integer
@@ -47,10 +52,8 @@ interpreter program =
 -- Convert AstParserError to EvalError
 -- INFO: Why do we need this ? Because the errors will bubble up?
 astParserErrorToEvalError :: AstParserError -> EvalError
-astParserErrorToEvalError (TokenError (LexError msg pos)) =
-  ParseError pos msg
-astParserErrorToEvalError (SyntaxError (ParserError msg pos)) =
-  ParseError pos msg
+astParserErrorToEvalError (TokenError (LexError msg pos)) = ParseError msg (Just pos)
+astParserErrorToEvalError (SyntaxError (ParserError msg pos)) = ParseError msg (Just pos)
 
 objectToString :: Object -> String
 objectToString (IntObj v) = show v
@@ -143,24 +146,18 @@ evalBlockStatement (s1 : ss) = do
 
 evalLetStatement :: Statement -> Eval Object
 evalLetStatement (LetStatement _ (IdentifierLit _ name) value) = do
-  obj <- evalExpression value
-  trace ("LetStatement: evaluated " ++ name ++ " = " ++ objectToString obj) $ do
-    case obj of
-      ReturnObj wrappedValue -> do
-        setObject name wrappedValue
-        return (ReturnObj wrappedValue)
-      ErrorObj _ -> return obj
-      _ -> do
-        setObject name obj
-        trace ("LetStatement: bound " ++ name ++ " = " ++ objectToString obj) $
-          case obj of
-            FunctionObj params body capturedEnv -> do
-              let selfEnv = Map.insert name (FunctionObj params body selfEnv) capturedEnv
-              trace ("LetStatement: selfEnv has " ++ name ++ "? " ++ show (Map.member name selfEnv)) $ do
-                let updatedObj = FunctionObj params body selfEnv
-                setObject name updatedObj
-                return updatedObj
-            _ -> return obj
+  obj <- unwrapReturnObj <$> evalExpression value
+  case obj of
+    ErrorObj _ -> return obj
+    FunctionObj params body capturedEnv -> do
+      let selfEnv = Map.insert name (FunctionObj params body selfEnv) capturedEnv
+          updatedObj = FunctionObj params body selfEnv
+      setObject name updatedObj
+      return updatedObj
+    _ -> do
+      setObject name obj
+      return obj
+evalLetStatement s = error $ "evalLetStatement called with non-LetStatement: " ++ show s
 
 evalReturnStatement :: Statement -> Eval Object
 evalReturnStatement (ReturnStatement _ expr) = do
@@ -169,9 +166,11 @@ evalReturnStatement (ReturnStatement _ expr) = do
     ReturnObj _ -> return obj
     ErrorObj _ -> return obj
     _ -> return (ReturnObj obj)
+evalReturnStatement s = error $ "evalReturnStatement called with non-ReturnStatement: " ++ show s
 
 evalExpressionStatement :: Statement -> Eval Object
 evalExpressionStatement (ExpressionStatement _ expr) = evalExpression expr
+evalExpressionStatement s = error $ "evalExpressionStatement called with non-ExpressionStatement: " ++ show s
 
 evalExpression :: Expression -> Eval Object
 evalExpression (IntLit _ intValue) = return (IntObj intValue)
@@ -179,129 +178,96 @@ evalExpression (FloatLit _ floatValue) = return (FloatObj floatValue)
 evalExpression (StringLit _ stringValue) = return (StringObj stringValue)
 evalExpression (BooleanLit _ value) =
   return (if value then trueObj else falseObj)
-evalExpression (IdentifierLit tok name) = do
+evalExpression (IdentifierLit (Token _ pos) name) = do
   maybeObj <- getObject name
   case maybeObj of
     Just obj -> return obj
-    Nothing -> return (ErrorObj (UndefinedVariable (tok ^. tokenPosition) name))
-evalExpression (IfExpression tok condition consequence alternative) = do
+    Nothing -> return (ErrorObj (UndefinedVariable name (Just pos)))
+evalExpression (IfExpression _ condition consequence alternative) = do
   conditionObj <- evalExpression condition
-  obj <- case isTruthy conditionObj of
+  case isTruthy conditionObj of
     True -> evalBlockStatement consequence
     False -> case alternative of
       Just stmts -> evalBlockStatement stmts
       Nothing -> return nullObj
-  case obj of
-    ReturnObj _ -> return obj
-    ErrorObj _ -> return obj
-    _ -> return obj
-evalExpression (PrefixExpression _ operator right) = do
-  rightSide <- evalExpression right
-  let obj = case (operator, rightSide) of
-        (Bang, IntObj value) -> if value == 0 then trueObj else falseObj
-        (Bang, FloatObj _) -> trueObj
-        (Bang, StringObj value) -> if value == "" then trueObj else falseObj
-        (Bang, BoolObj v1) -> if v1 then falseObj else trueObj
-        (Minus, IntObj value) -> IntObj (-value)
-        (Minus, FloatObj value) -> FloatObj (-value)
-        (_, _) -> ErrorObj (TypeError (right ^. exprToken . tokenPosition) ("Prefix operation not supported, value at" ++ expressionToString right ++ "not supported"))
-  return obj
-evalExpression (InfixExpression tok left operator right) = do
-  leftSide <- evalExpression left
-  rightSide <- evalExpression right
+evalExpression (PrefixExpression (Token _ pos) operator right) = do
+  rightSide <- unwrapReturnObj <$> evalExpression right
+  return $ case operator of
+    Bang -> evalBang rightSide
+    Minus -> evalMinus rightSide
+    _ -> addPos $ ErrorObj (TypeError ("Prefix operation not supported: " ++ expressionToString right) Nothing)
+  where
+    addPos obj = case obj of
+      ErrorObj _ -> withPos pos obj
+      _ -> obj
 
-  let unwrap (ReturnObj o) = o
-      unwrap o = o
-  let leftSide' = unwrap leftSide
-      rightSide' = unwrap rightSide
+    evalBang (IntObj v) = if v == 0 then trueObj else falseObj
+    evalBang (FloatObj _) = trueObj
+    evalBang (StringObj v) = if v == "" then trueObj else falseObj
+    evalBang (BoolObj v) = if v then falseObj else trueObj
+    evalBang o = addPos $ ErrorObj (TypeError ("Bang operator not supported for: " ++ expressionToString right) Nothing)
 
-  let pos = tok ^. tokenPosition -- Get position from the infix expression itself
-  let obj = case operator of
-        Plus -> evalSum pos leftSide' rightSide'
-        Minus -> evalMinus pos leftSide' rightSide'
-        Asterisk -> evalProduct pos leftSide' rightSide'
-        Slash -> evalDivide pos leftSide' rightSide'
-        Equal -> evalEquals pos leftSide' rightSide'
-        NotEqual -> evalNotEquals pos leftSide' rightSide'
-        LessThan -> evalLessThan pos leftSide' rightSide'
-        GreaterThan -> evalGreaterThan pos leftSide' rightSide'
-  return obj
-evalExpression (FunctionLit tok parameters body) = do
+    evalMinus (IntObj v) = IntObj (-v)
+    evalMinus (FloatObj v) = FloatObj (-v)
+    evalMinus o = addPos $ ErrorObj (TypeError ("Minus operator not supported for: " ++ expressionToString right) Nothing)
+evalExpression (InfixExpression (Token _ pos) left operator right) = do
+  leftSide <- unwrapReturnObj <$> evalExpression left
+  rightSide <- unwrapReturnObj <$> evalExpression right
+
+  return $ case operator of
+    Plus -> addPos $ evalSum leftSide rightSide
+    Minus -> addPos $ evalMinus leftSide rightSide
+    Asterisk -> addPos $ evalProduct leftSide rightSide
+    Slash -> addPos $ evalDivide leftSide rightSide
+    Equal -> addPos $ evalEquals leftSide rightSide
+    NotEqual -> addPos $ evalNotEquals leftSide rightSide
+    LessThan -> addPos $ evalLessThan leftSide rightSide
+    GreaterThan -> addPos $ evalGreaterThan leftSide rightSide
+  where
+    addPos obj = case obj of
+      ErrorObj _ -> withPos pos obj
+      _ -> obj
+evalExpression (FunctionLit (Token _ pos) parameters body) = do
   if all isIdentifierLit parameters
     then do
       env <- get
       return (FunctionObj parameters body env)
     else
-      return (ErrorObj (InvalidFunctionParameter (tok ^. tokenPosition)))
-evalExpression (CallExpression tok (IdentifierLit _ funcName) args) = do
+      return (ErrorObj (InvalidFunctionParameter (Just pos)))
+evalExpression (CallExpression (Token _ pos) (IdentifierLit _ funcName) args) = do
   maybeFunc <- getObject funcName
   case maybeFunc of
     Just (FunctionObj params body env) -> do
-      if length params /= length args
-        then return (ErrorObj (InvalidFunctionCall (tok ^. tokenPosition)))
-        else do
-          evaluatedArgs <- mapM evalExpression args
-          let unwrapedArgs = map unwrapReturnObj evaluatedArgs
-          if any isError evaluatedArgs
-            then return (head (filter isError unwrapedArgs))
-            else do
-              let extendedEnv = Map.union (Map.fromList [(name, obj) | (IdentifierLit _ name, obj) <- zip params unwrapedArgs]) env
-              oldEnv <- get
-              put extendedEnv
-              result <- evalBlockStatement body
-              put oldEnv
-              return result
+      functionEval params body env args
     _ -> do
-      return (ErrorObj (InvalidFunctionParameter (tok ^. tokenPosition)))
-evalExpression (CallExpression tok (FunctionLit _ params body) args) = do
-  if length params /= length args
-    then return (ErrorObj (InvalidFunctionCall (tok ^. tokenPosition)))
-    else do
-      evaluatedArgs <- mapM evalExpression args
+      return (ErrorObj (UndefinedFunction funcName (Just pos)))
+evalExpression (CallExpression (Token _ pos) (FunctionLit _ params body) args) = do
+  oldEnv <- get
+  functionEval params body oldEnv args
+evalExpression (CallExpression (Token _ pos) call@(CallExpression _ _ _) outerArgs) = do
+  maybeFunc <- evalExpression call
+  case maybeFunc of
+    FunctionObj params body env -> functionEval params body env outerArgs
+    ReturnObj (FunctionObj params body env) -> functionEval params body env outerArgs
+    _ -> return nullObj
+evalExpression expr = return (ErrorObj (TypeError ("Unhandled expression: " ++ show expr) (Just (expr ^. exprToken . tokenPosition))))
+
+functionEval :: [Expression] -> [Statement] -> Enviroment -> [Expression] -> Eval Object
+functionEval params body env args
+  | length params /= length args = return (ErrorObj (InvalidFunctionCall Nothing))
+  | otherwise = do
+      evaluatedArgs <- map unwrapReturnObj <$> mapM evalExpression args
       if any isError evaluatedArgs
         then return (head (filter isError evaluatedArgs))
         else do
           oldEnv <- get
-          let extendedEnv = Map.union (Map.fromList [(name, obj) | (IdentifierLit _ name, obj) <- zip params evaluatedArgs]) oldEnv
-          put extendedEnv
+          put (extendedEnv env params evaluatedArgs)
           result <- evalBlockStatement body
           put oldEnv
           return result
-evalExpression (CallExpression tok call@(CallExpression _ _ _) outerArgs) = do
-  maybeFunc <- evalExpression call
-  case maybeFunc of
-    FunctionObj params body env -> do
-      if length params /= length outerArgs
-        then return (ErrorObj (InvalidFunctionCall (tok ^. tokenPosition)))
-        else do
-          evaluatedArgs <- mapM evalExpression outerArgs
-          let unwrapedArgs = map unwrapReturnObj evaluatedArgs
-          if any isError unwrapedArgs
-            then return (head (filter isError unwrapedArgs))
-            else do
-              let extendedEnv = Map.union (Map.fromList [(name, obj) | (IdentifierLit _ name, obj) <- zip params unwrapedArgs]) env
-              oldEnv <- get
-              put extendedEnv
-              result <- evalBlockStatement body
-              put oldEnv
-              return result
-    ReturnObj (FunctionObj params body env) -> do
-      if length params /= length outerArgs
-        then return (ErrorObj (InvalidFunctionCall (tok ^. tokenPosition)))
-        else do
-          evaluatedArgs <- mapM evalExpression outerArgs
-          let unwrapedArgs = map unwrapReturnObj evaluatedArgs
-          if any isError unwrapedArgs
-            then return (head (filter isError unwrapedArgs))
-            else do
-              let extendedEnv = Map.union (Map.fromList [(name, obj) | (IdentifierLit _ name, obj) <- zip params unwrapedArgs]) env
-              oldEnv <- get
-              put extendedEnv
-              result <- evalBlockStatement body
-              put oldEnv
-              return result
-    _ -> return nullObj
-evalExpression expr = return (ErrorObj (TypeError (expr ^. exprToken . tokenPosition) ("Unhandled expression: " ++ show (expr))))
+
+extendedEnv :: Enviroment -> [Expression] -> [Object] -> Enviroment
+extendedEnv env params unwrapedArgs = Map.union (Map.fromList [(name, obj) | (IdentifierLit _ name, obj) <- zip params unwrapedArgs]) env
 
 isError :: Object -> Bool
 isError (ErrorObj _) = True
@@ -315,43 +281,43 @@ isIdentifierLit :: Expression -> Bool
 isIdentifierLit (IdentifierLit _ _) = True
 isIdentifierLit _ = False
 
-evalSum :: Position -> Object -> Object -> Object
-evalSum pos left right = case (left, right) of
+evalSum :: Object -> Object -> Object
+evalSum left right = case (left, right) of
   (IntObj v1, IntObj v2) -> IntObj (v1 + v2)
   (FloatObj v1, FloatObj v2) -> FloatObj (v1 + v2)
   (IntObj v1, FloatObj v2) -> FloatObj (fromIntegral v1 + v2)
   (FloatObj v1, IntObj v2) -> FloatObj (v1 + fromIntegral v2)
   (StringObj v1, StringObj v2) -> StringObj (v1 ++ v2)
-  (_, _) -> ErrorObj (TypeError pos ("Sum operator doesn't support: " ++ objectToString left ++ " + " ++ objectToString right))
+  (_, _) -> ErrorObj (TypeError ("Sum operator doesn't support: " ++ objectToString left ++ " + " ++ objectToString right) Nothing)
 
-evalMinus :: Position -> Object -> Object -> Object
-evalMinus pos left right = case (left, right) of
+evalMinus :: Object -> Object -> Object
+evalMinus left right = case (left, right) of
   (IntObj v1, IntObj v2) -> IntObj (v1 - v2)
   (FloatObj v1, FloatObj v2) -> FloatObj (v1 - v2)
   (IntObj v1, FloatObj v2) -> FloatObj (fromIntegral v1 - v2)
   (FloatObj v1, IntObj v2) -> FloatObj (v1 - fromIntegral v2)
-  (_, _) -> ErrorObj (TypeError pos ("Minus operator doesn't support: " ++ objectToString left ++ " - " ++ objectToString right))
+  (_, _) -> ErrorObj (TypeError ("Minus operator doesn't support: " ++ objectToString left ++ " - " ++ objectToString right) Nothing)
 
-evalProduct :: Position -> Object -> Object -> Object
-evalProduct pos left right = case (left, right) of
+evalProduct :: Object -> Object -> Object
+evalProduct left right = case (left, right) of
   (IntObj v1, IntObj v2) -> IntObj (v1 * v2)
   (FloatObj v1, FloatObj v2) -> FloatObj (v1 * v2)
   (IntObj v1, FloatObj v2) -> FloatObj (fromIntegral v1 * v2)
   (FloatObj v1, IntObj v2) -> FloatObj (v1 * fromIntegral v2)
-  (_, _) -> ErrorObj (TypeError pos ("Product operator doesn't support: " ++ objectToString left ++ " * " ++ objectToString right))
+  (_, _) -> ErrorObj (TypeError ("Product operator doesn't support: " ++ objectToString left ++ " * " ++ objectToString right) Nothing)
 
-evalDivide :: Position -> Object -> Object -> Object
-evalDivide pos left right = case (left, right) of
-  (_, IntObj 0) -> ErrorObj (DivisionByZero pos)
-  (_, FloatObj 0.0) -> ErrorObj (DivisionByZero pos)
+evalDivide :: Object -> Object -> Object
+evalDivide left right = case (left, right) of
+  (_, IntObj 0) -> ErrorObj (DivisionByZero Nothing)
+  (_, FloatObj 0.0) -> ErrorObj (DivisionByZero Nothing)
   (IntObj v1, IntObj v2) -> IntObj (v1 `div` v2)
   (FloatObj v1, FloatObj v2) -> FloatObj (v1 / v2)
   (IntObj v1, FloatObj v2) -> FloatObj (fromIntegral v1 / v2)
   (FloatObj v1, IntObj v2) -> FloatObj (v1 / fromIntegral v2)
-  (_, _) -> ErrorObj (TypeError pos ("Division operator doesn't support: " ++ objectToString left ++ " / " ++ objectToString right))
+  (_, _) -> ErrorObj (TypeError ("Division operator doesn't support: " ++ objectToString left ++ " / " ++ objectToString right) Nothing)
 
-evalEquals :: Position -> Object -> Object -> Object
-evalEquals pos left right = case (left, right) of
+evalEquals :: Object -> Object -> Object
+evalEquals left right = case (left, right) of
   (IntObj v1, IntObj v2) -> if v1 == v2 then trueObj else falseObj
   (FloatObj v1, FloatObj v2) -> if v1 == v2 then trueObj else falseObj
   (IntObj v1, FloatObj v2) -> if fromIntegral v1 == v2 then trueObj else falseObj
@@ -359,29 +325,29 @@ evalEquals pos left right = case (left, right) of
   (StringObj v1, StringObj v2) -> if v1 == v2 then trueObj else falseObj
   (BoolObj v1, BoolObj v2) -> if v1 == v2 then trueObj else falseObj
   (NullObj, NullObj) -> trueObj
-  _ -> ErrorObj (TypeError pos ("Equals failed: equality comparison returned non-boolean " ++ objectToString left ++ " == " ++ objectToString right))
+  _ -> ErrorObj (TypeError ("Equals failed: equality comparison returned non-boolean " ++ objectToString left ++ " == " ++ objectToString right) Nothing)
 
-evalNotEquals :: Position -> Object -> Object -> Object
-evalNotEquals pos left right = case evalEquals pos left right of
+evalNotEquals :: Object -> Object -> Object
+evalNotEquals left right = case evalEquals left right of
   BoolObj True -> falseObj
   BoolObj False -> trueObj
-  ErrorObj m -> ErrorObj (TypeError pos "NotEquals failed: equality comparison returned non-boolean")
+  ErrorObj _ -> ErrorObj (TypeError "NotEquals failed: equality comparison returned non-boolean" Nothing)
 
-evalLessThan :: Position -> Object -> Object -> Object
-evalLessThan pos left right = case (left, right) of
+evalLessThan :: Object -> Object -> Object
+evalLessThan left right = case (left, right) of
   (IntObj v1, IntObj v2) -> if v1 < v2 then trueObj else falseObj
   (FloatObj v1, FloatObj v2) -> if v1 < v2 then trueObj else falseObj
   (IntObj v1, FloatObj v2) -> if fromIntegral v1 < v2 then trueObj else falseObj
   (FloatObj v1, IntObj v2) -> if v1 < fromIntegral v2 then trueObj else falseObj
-  (_, _) -> ErrorObj (TypeError pos ("LessThan operator only supports numbers: " ++ objectToString left ++ " < " ++ objectToString right))
+  (_, _) -> ErrorObj (TypeError ("LessThan operator only supports numbers: " ++ objectToString left ++ " < " ++ objectToString right) Nothing)
 
-evalGreaterThan :: Position -> Object -> Object -> Object
-evalGreaterThan pos left right = case (left, right) of
+evalGreaterThan :: Object -> Object -> Object
+evalGreaterThan left right = case (left, right) of
   (IntObj v1, IntObj v2) -> if v1 > v2 then trueObj else falseObj
   (FloatObj v1, FloatObj v2) -> if v1 > v2 then trueObj else falseObj
   (IntObj v1, FloatObj v2) -> if fromIntegral v1 > v2 then trueObj else falseObj
   (FloatObj v1, IntObj v2) -> if v1 > fromIntegral v2 then trueObj else falseObj
-  (_, _) -> ErrorObj (TypeError pos ("GreaterThan operator only supports numbers: " ++ objectToString left ++ " > " ++ objectToString right))
+  (_, _) -> ErrorObj (TypeError ("GreaterThan operator only supports numbers: " ++ objectToString left ++ " > " ++ objectToString right) Nothing)
 
 isTruthy :: Object -> Bool
 isTruthy obj = case obj of
