@@ -77,15 +77,15 @@ objectToString (ArrayObj elems) = "[" ++ intercalate ", " (map objectToString el
 objectToString (ErrorObj err) = "ERROR: " ++ show err
 
 objectTypeString :: Object -> String
-objectTypeString (IntObj _)       = "Integer"
-objectTypeString (BoolObj _)      = "Boolean"
-objectTypeString (FloatObj _)     = "Float"
-objectTypeString (StringObj _)    = "String"
-objectTypeString (ArrayObj _)     = "Array"
+objectTypeString (IntObj _) = "Integer"
+objectTypeString (BoolObj _) = "Boolean"
+objectTypeString (FloatObj _) = "Float"
+objectTypeString (StringObj _) = "String"
+objectTypeString (ArrayObj _) = "Array"
 objectTypeString (FunctionObj {}) = "Function"
-objectTypeString NullObj          = "Null"
-objectTypeString (ReturnObj _)    = "Return"
-objectTypeString (ErrorObj _)     = "Error"
+objectTypeString NullObj = "Null"
+objectTypeString (ReturnObj _) = "Return"
+objectTypeString (ErrorObj _) = "Error"
 
 falseObj :: Object
 falseObj = BoolObj False
@@ -286,20 +286,35 @@ evalExpression (IndexExpression (Token _ pos) left indexExpr) = do
         IntObj idx ->
           case safeIndex list (fromIntegral idx) of
             Just value -> return value
-            Nothing -> return (ErrorObj (IndexOutOfBounds
-              { outOfBoundsIndex = fromIntegral idx
-              , arrayLength = length list
-              , pos = Just pos
-              }))
-        _ -> return (ErrorObj (InvalidIndexType
-              { expected = "Integer"
-              , got = objectTypeString evalIndex
-              , pos = Just pos
-              }))
-    _ -> return (ErrorObj (InvalidIndexTarget
-          { got = objectTypeString maybeArrayObj
-          , pos = Just pos
-          }))
+            Nothing ->
+              return
+                ( ErrorObj
+                    ( IndexOutOfBounds
+                        { outOfBoundsIndex = fromIntegral idx,
+                          arrayLength = length list,
+                          pos = Just pos
+                        }
+                    )
+                )
+        _ ->
+          return
+            ( ErrorObj
+                ( InvalidIndexType
+                    { expected = "Integer",
+                      got = objectTypeString evalIndex,
+                      pos = Just pos
+                    }
+                )
+            )
+    _ ->
+      return
+        ( ErrorObj
+            ( InvalidIndexTarget
+                { got = objectTypeString maybeArrayObj,
+                  pos = Just pos
+                }
+            )
+        )
 evalExpression expr = return (ErrorObj (TypeError ("Unhandled expression: " ++ show expr) (Just (expr ^. exprToken . tokenPosition))))
 
 functionEval :: [Expression] -> [Statement] -> Enviroment -> [Expression] -> Eval Object
