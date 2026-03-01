@@ -135,12 +135,24 @@ literalTest = do
         it "should parse function literal correctly" $
           case head stmts of
             ExpressionStatement _ (ArrayLit _ elements) -> do
-              traceM (show elements)
               elements
                 `shouldSatisfy` ( \ps ->
                                     length ps == 2
-                                      && and (zipWith (?==) ps [IntLit identityToken 10, StringLit identityToken "\"that\""])
+                                      && and (zipWith (?==) ps [IntLit identityToken 10, StringLit identityToken "that"])
                                 )
+  describe "index expression parsing" $ do
+    let state = initialState "myarray[1+1]"
+    case runAstParser parseProgram state of
+      Left err ->
+        it "should parse successfully" $
+          expectationFailure ("Parser failed: " ++ show err)
+      Right (Program stmts, _) ->
+        it "should parse index expression correctly" $
+          case head stmts of
+            ExpressionStatement _ expr@(IndexExpression _ left indexExpr) -> do
+              expr `shouldSatisfy` (?== IndexExpression identityToken (IdentifierLit identityToken "myarray") (InfixExpression identityToken (IntLit identityToken 1) Plus (IntLit identityToken 1)))
+            _ -> expectationFailure "Expected IndexExpression"
+
   describe "function literal" $ do
     let state = initialState "fn(x,y){5;}"
     case runAstParser parseProgram state of
@@ -269,7 +281,7 @@ isExpressionStatement (ExpressionStatement {}) = True
 isExpressionStatement _ = False
 
 -- Helper predicates for expressions
-isIntLitWithValue :: Integer -> Expression -> Bool
+isIntLitWithValue :: Int -> Expression -> Bool
 isIntLitWithValue expected (IntLit _ val) = val == expected
 isIntLitWithValue _ _ = False
 

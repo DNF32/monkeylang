@@ -3,13 +3,19 @@ module Eval where
 import Ast (Expression (..), Statement (..), exprToken, expressionToString)
 import Control.Lens
 import Control.Monad.State
+import Data.List (intercalate)
 import Data.Map qualified as Map
-import Debug.Trace
 import Parser (AstParserError (..), ParserError (..), parseProgram, runAstParser)
 import Token
 
 emptyMap :: Map.Map k v
 emptyMap = Map.empty
+
+-- Safe version
+safeIndex :: [a] -> Int -> Maybe a
+safeIndex xs i
+  | i < 0 || i >= length xs = Nothing
+  | otherwise = Just (xs !! i)
 
 type Enviroment = Map.Map String Object
 
@@ -24,6 +30,9 @@ data EvalError
   | InvalidFunctionParameter {pos :: Maybe Position}
   | InvalidFunctionCall {pos :: Maybe Position}
   | UndefinedFunction {varName :: String, pos :: Maybe Position}
+  | InvalidIndexTarget {got :: String, pos :: Maybe Position} -- indexing a non-array
+  | InvalidIndexType {expected :: String, got :: String, pos :: Maybe Position}
+  | IndexOutOfBounds {outOfBoundsIndex :: Int, arrayLength :: Int, pos :: Maybe Position}
   deriving (Show, Eq)
 
 withPos :: Position -> Object -> Object
@@ -31,12 +40,13 @@ withPos p (ErrorObj err) = ErrorObj (err {pos = Just p})
 withPos _ obj = obj
 
 data Object
-  = IntObj Integer
+  = IntObj Int
   | BoolObj Bool
   | FloatObj Float
   | StringObj String
   | FunctionObj [Expression] [Statement] Enviroment
   | NullObj
+  | ArrayObj [Object]
   | ReturnObj Object
   | ErrorObj EvalError
   deriving (Show, Eq)
@@ -63,7 +73,19 @@ objectToString (StringObj v) = "\"" ++ v ++ "\""
 objectToString (FunctionObj params _ _) = "fn(" ++ show (length params) ++ " params)"
 objectToString (ReturnObj obj) = objectToString obj
 objectToString NullObj = "null"
+objectToString (ArrayObj elems) = "[" ++ intercalate ", " (map objectToString elems) ++ "]"
 objectToString (ErrorObj err) = "ERROR: " ++ show err
+
+objectTypeString :: Object -> String
+objectTypeString (IntObj _)       = "Integer"
+objectTypeString (BoolObj _)      = "Boolean"
+objectTypeString (FloatObj _)     = "Float"
+objectTypeString (StringObj _)    = "String"
+objectTypeString (ArrayObj _)     = "Array"
+objectTypeString (FunctionObj {}) = "Function"
+objectTypeString NullObj          = "Null"
+objectTypeString (ReturnObj _)    = "Return"
+objectTypeString (ErrorObj _)     = "Error"
 
 falseObj :: Object
 falseObj = BoolObj False
@@ -173,7 +195,7 @@ evalExpressionStatement (ExpressionStatement _ expr) = evalExpression expr
 evalExpressionStatement s = error $ "evalExpressionStatement called with non-ExpressionStatement: " ++ show s
 
 evalExpression :: Expression -> Eval Object
-evalExpression (IntLit _ intValue) = return (IntObj intValue)
+evalExpression (IntLit _ intValue) = return (IntObj (fromIntegral intValue))
 evalExpression (FloatLit _ floatValue) = return (FloatObj floatValue)
 evalExpression (StringLit _ stringValue) = return (StringObj stringValue)
 evalExpression (BooleanLit _ value) =
@@ -250,6 +272,34 @@ evalExpression (CallExpression (Token _ pos) call@(CallExpression _ _ _) outerAr
     FunctionObj params body env -> functionEval params body env outerArgs
     ReturnObj (FunctionObj params body env) -> functionEval params body env outerArgs
     _ -> return nullObj
+evalExpression (ArrayLit _ elms) = do
+  evalExpr <- mapM evalExpression elms
+  return (ArrayObj evalExpr)
+evalExpression (IndexExpression (Token _ pos) left indexExpr) = do
+  maybeArrayObj <- evalExpression left
+  case maybeArrayObj of
+    ErrorObj _ -> return maybeArrayObj
+    ArrayObj list -> do
+      evalIndex <- evalExpression indexExpr
+      case evalIndex of
+        ErrorObj _ -> return evalIndex
+        IntObj idx ->
+          case safeIndex list (fromIntegral idx) of
+            Just value -> return value
+            Nothing -> return (ErrorObj (IndexOutOfBounds
+              { outOfBoundsIndex = fromIntegral idx
+              , arrayLength = length list
+              , pos = Just pos
+              }))
+        _ -> return (ErrorObj (InvalidIndexType
+              { expected = "Integer"
+              , got = objectTypeString evalIndex
+              , pos = Just pos
+              }))
+    _ -> return (ErrorObj (InvalidIndexTarget
+          { got = objectTypeString maybeArrayObj
+          , pos = Just pos
+          }))
 evalExpression expr = return (ErrorObj (TypeError ("Unhandled expression: " ++ show expr) (Just (expr ^. exprToken . tokenPosition))))
 
 functionEval :: [Expression] -> [Statement] -> Enviroment -> [Expression] -> Eval Object

@@ -106,7 +106,7 @@ testIfElse = do
     forM_ testCases $ \(input, expectedValue) -> do
       describe ("parsing: " ++ input) $ do
         it ("It should have value " ++ show expectedValue) $ do
-          evalHelper input `shouldBe` IntObj expectedValue
+          evalHelper input `shouldBe` IntObj (fromInteger expectedValue)
 
   describe "nil cases" $ do
     let testCases :: [(String, Object)]
@@ -134,7 +134,7 @@ testReturnStatement = do
     forM_ testCases $ \(input, expectedValue) -> do
       describe ("parsing: " ++ input) $ do
         it ("It should have value " ++ show expectedValue) $ do
-          evalHelper input `shouldBe` IntObj expectedValue
+          evalHelper input `shouldBe` IntObj (fromInteger expectedValue)
 
 testClosures :: Spec
 testClosures = do
@@ -146,7 +146,7 @@ testClosures = do
     forM_ testCases $ \(input, expectedValue) -> do
       describe ("parsing: " ++ input) $ do
         it ("It should have value " ++ show expectedValue) $ do
-          evalHelper input `shouldBe` IntObj expectedValue
+          evalHelper input `shouldBe` IntObj (fromInteger expectedValue)
 
 testFunctionApplication :: Spec
 testFunctionApplication = do
@@ -162,4 +162,21 @@ testFunctionApplication = do
     forM_ testCases $ \(input, expectedValue) -> do
       describe ("parsing: " ++ input) $ do
         it ("It should have value " ++ show expectedValue) $ do
-          evalHelper input `shouldBe` IntObj expectedValue
+          evalHelper input `shouldBe` IntObj (fromInteger expectedValue)
+
+testIndex :: Spec
+testIndex = describe "Test indexing" $ do
+  it "indexes an integer element" $
+    evalHelper "[1, 2, 10, 4][0];" `shouldBe` IntObj 1
+  it "indexes into the middle" $
+    evalHelper "[1, 2, 10, 4][2];" `shouldBe` IntObj 10
+  it "returns null on out of bounds" $
+    evalHelper "[1, 2, 3][5];" `shouldBe` ErrorObj (IndexOutOfBounds {outOfBoundsIndex = 5, arrayLength = 3, pos = Just (Position {_line = 1, _column = 10})})
+  it "returns error on non-integer index" $
+    evalHelper "[1, 2, 3][true];"
+      `shouldBe` ErrorObj
+        InvalidIndexType
+          { expected = "Integer"
+          , got = "Boolean"
+          , pos = Just Position { _line = 1, _column = 10 }
+          }

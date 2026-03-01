@@ -45,7 +45,7 @@ import Token (LexerState (currentPosition), Token (..), TokenType (..), tokenTyp
 type Operator = TokenType
 
 data Expression
-  = IntLit {token :: Token, intValue :: Integer}
+  = IntLit {token :: Token, intValue :: Int}
   | FloatLit {token :: Token, floatValue :: Float}
   | StringLit {token :: Token, stringValue :: String}
   | IdentifierLit {token :: Token, name :: String}

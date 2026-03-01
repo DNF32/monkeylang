@@ -5,6 +5,7 @@ module Parser where
 import Ast (Expression (..), Precedence (..), Statement (..), exprToken, infixToPrecedence)
 import Control.Applicative (Alternative (..))
 import Control.Lens
+import Data.Char (GeneralCategory (LowercaseLetter))
 import Data.List (intercalate)
 import Debug.Trace
 import SimpleParser
@@ -223,6 +224,13 @@ parseFunctionLiteral = do
       return $ FunctionLit fn parameters stmts'
     _ -> error "parseBlockStatement should always return BlockStatement"
 
+parseIndexExpression :: Expression -> AstParser Expression
+parseIndexExpression left = do
+  tok <- isToken LBracket
+  indexParsed <- parseExpressionRbp LOWEST
+  _ <- isToken RBracket
+  return (IndexExpression tok left indexParsed)
+
 parseNud :: AstParser Expression
 parseNud = do
   pTok <- peekToken
@@ -296,6 +304,7 @@ continueInfix precedence leftExpr = do
         NotEqual -> parseNEqualsInfixExpression leftExpr
         LessThan -> parseLessThanInfixExpression leftExpr
         GreaterThan -> parserGreaterThanInfixExpression leftExpr
+        LBracket -> parseIndexExpression leftExpr
         LParen -> parseCallExpression leftExpr
         _ -> newParserWithError ("Unexpected token in infix position: " ++ show tt) pos
       continueInfix precedence newExpr
