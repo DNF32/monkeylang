@@ -41,6 +41,7 @@ where
 import Control.Lens
 import Data.List (intercalate)
 import Token (LexerState (currentPosition), Token (..), TokenType (..), tokenType)
+import TypeChecker
 
 type Operator = TokenType
 
@@ -48,13 +49,13 @@ data Expression
   = IntLit {token :: Token, intValue :: Int}
   | FloatLit {token :: Token, floatValue :: Float}
   | StringLit {token :: Token, stringValue :: String}
-  | IdentifierLit {token :: Token, name :: String}
+  | IdentifierLit {token :: Token, name :: String, ann :: Maybe Type}
   | ArrayLit {token :: Token, elements :: [Expression]}
   | BooleanLit {token :: Token, value :: Bool}
   | NullLit {token :: Token}
   | PrefixExpression {token :: Token, operator :: Operator, right :: Expression}
   | InfixExpression {token :: Token, left :: Expression, operator :: Operator, right :: Expression}
-  | FunctionLit {token :: Token, parameters :: [Expression], body :: [Statement]} -- Expression!
+  | FunctionLit {token :: Token, parameters :: [(Expression, Maybe Type)], returnType :: Maybe Type, body :: [Statement], fnType :: Maybe Type} -- Expression!
   | CallExpression {token :: Token, function :: Expression, arguments :: [Expression]}
   | IndexExpression {token :: Token, left :: Expression, index :: Expression}
   | IfExpression {token :: Token, condition :: Expression, consequence :: [Statement], alternative :: Maybe [Statement]}
@@ -74,7 +75,7 @@ PrefixExpression {operator = lop, right = lr} ?== PrefixExpression {operator = r
 InfixExpression {left = ll, operator = lop, right = lr} ?== InfixExpression {left = rl, operator = rop, right = rr} =
   lop == rop && ll ?== rl && lr ?== rr
 FunctionLit {parameters = lp, body = lb} ?== FunctionLit {parameters = rp, body = rb} =
-  expressionsEqual lp rp && statementsEqual lb rb
+  expressionsEqual (map fst lp) (map fst rp) && statementsEqual lb rb
 CallExpression {function = lf, arguments = la} ?== CallExpression {function = rf, arguments = ra} =
   lf ?== rf && expressionsEqual la ra
 IndexExpression {left = ll, index = li} ?== IndexExpression {left = rl, index = ri} =
@@ -86,7 +87,7 @@ _ ?== _ = False
 
 data Statement
   = Program {statements :: [Statement]}
-  | LetStatement {token :: Token, name :: Expression, value :: Expression} -- Expression!
+  | LetStatement {token :: Token, name :: Expression, typeHint :: Maybe Type, value :: Expression} -- Expression!
   | ReturnStatement {token :: Token, result :: Expression}
   | ExpressionStatement {token :: Token, expr :: Expression}
   | BlockStatement {statements :: [Statement]}
@@ -169,7 +170,7 @@ infixToPrecedence token = case token of
   otherwise -> LOWEST
 
 statementToString :: Statement -> String
-statementToString (LetStatement _ name value) = "let " ++ expressionToString name ++ " = " ++ expressionToString value
+statementToString (LetStatement _ name _ value) = "let " ++ expressionToString name ++ " = " ++ expressionToString value
 statementToString (ReturnStatement _ value) = "return " ++ expressionToString value
 statementToString (ExpressionStatement _ value) = expressionToString value
 statementToString (BlockStatement stmts) = intercalate "" (map statementToString stmts)
@@ -177,7 +178,7 @@ statementToString (Program stmts) = intercalate "" (map statementToString stmts)
 
 prettyPrintStatement :: Int -> Statement -> String
 prettyPrintStatement indent stmt = case stmt of
-  LetStatement _ name value ->
+  LetStatement _ name _ value ->
     spaces indent
       ++ "LetStatement\n"
       ++ spaces (indent + 2)
@@ -215,7 +216,7 @@ prettyPrintExpression indent expr = case expr of
     spaces indent ++ "StringLit: " ++ show value ++ "\n"
   NullLit _ ->
     spaces indent ++ "NullLit\n"
-  IdentifierLit _ value ->
+  IdentifierLit _ value _ ->
     spaces indent ++ "IdentifierLit: " ++ value ++ "\n"
   BooleanLit _ value ->
     spaces indent ++ "BooleanLit: " ++ show value ++ "\n"
@@ -244,12 +245,12 @@ prettyPrintExpression indent expr = case expr of
       ++ spaces (indent + 2)
       ++ "right:\n"
       ++ prettyPrintExpression (indent + 4) right
-  FunctionLit _ params body ->
+  FunctionLit _ params _ body ->
     spaces indent
       ++ "FunctionLit\n"
       ++ spaces (indent + 2)
       ++ "parameters: ["
-      ++ intercalate ", " (map expressionToString params)
+      ++ intercalate ", " (map (expressionToString . fst) params)
       ++ "]\n"
       ++ spaces (indent + 2)
       ++ "body:\n"
@@ -294,7 +295,7 @@ expressionToString :: Expression -> String
 expressionToString (IntLit _ val) = show val
 expressionToString (FloatLit _ val) = show val
 expressionToString (StringLit _ val) = val
-expressionToString (IdentifierLit _ val) = val
+expressionToString (IdentifierLit _ val _) = val
 expressionToString (BooleanLit _ val) = show val
 expressionToString (ArrayLit _ elements) = "[" ++ intercalate ", " (map expressionToString elements) ++ "]"
 expressionToString (PrefixExpression _ Bang val) = "(" ++ "!" ++ expressionToString val ++ ")"

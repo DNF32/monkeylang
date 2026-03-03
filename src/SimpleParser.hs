@@ -1,6 +1,6 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 
-module SimpleParser (SimpleParserError (..), SimpleParser (..), choice, oneOrMore, zeroOrMore, optional) where
+module SimpleParser (sepBy, SimpleParserError (..), SimpleParser (..), choice, oneOrMore, zeroOrMore, optional) where
 
 import Control.Applicative (Alternative (..))
 
@@ -50,6 +50,9 @@ instance (SimpleParserError e s) => Alternative (SimpleParser s e) where
   la <|> la2 = SimpleParser $ \state -> case run la state of
     Left _ -> run la2 state
     Right lexed -> Right lexed
+
+sepBy :: (SimpleParserError e s) => SimpleParser s e a -> SimpleParser s e sep -> SimpleParser s e [a]
+sepBy p sep = (:) <$> p <*> zeroOrMore (sep *> p) <|> pure []
 
 oneOrMore :: (SimpleParserError e s) => (SimpleParser s e) a -> (SimpleParser s e) [a]
 oneOrMore la = (:) <$> la <*> zeroOrMore la

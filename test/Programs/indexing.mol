@@ -1,0 +1,32 @@
+let flip = fn(f) {
+  return fn(x, y) { return f(y, x); };
+};
+
+let curry = fn(f, x) {
+  return fn(y) { return f(x, y); };
+};
+
+let compose = fn(f, g) {
+  return fn(x) { return f(g(x)); };
+};
+
+let add = fn(x, y) { return x + y; };
+let subtract = fn(x, y) { return x - y; };
+let multiply = fn(x, y) { return x * y; };
+
+let add10 = curry(add, 10);
+let sub5 = curry(flip(subtract), 5);
+let triple = curry(multiply, 3);
+
+let transform = compose(add10, compose(sub5, triple));
+
+let fib = fn(n) {
+  if (n < 2) { return n; }
+  return fib(n - 1) + fib(n - 2);
+};
+
+let results = [fib(0), fib(1), fib(2), fib(3), fib(4), fib(5), fib(6), fib(7)];
+
+let a = transform(results[7]);
+let b = transform(results[6]);
+a + b;

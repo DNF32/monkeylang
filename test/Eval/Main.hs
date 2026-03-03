@@ -17,7 +17,15 @@ initialState :: String -> LexerState
 initialState input = LexerState {getInput = input, currentPosition = Position {_line = 1, _column = 1}}
 
 main :: IO ()
-main = hspec testIntegerObj
+main = hspec $ do
+  testIntegerObj
+  testBoolObj
+  testBangOperator
+  testIfElse
+  testReturnStatement
+  testClosures
+  testFunctionApplication
+  testIndex
 
 evalHelper :: String -> Object
 evalHelper program =

@@ -45,6 +45,15 @@ data TokenType
   | If -- Remove String: always "if"
   | Else -- Remove String: always "else"
   | Return -- Remove String: always "return"
+  -- type system
+  | IntType
+  | StringType
+  | BoolType
+  | FloatType
+  | VoidType
+  | StructType
+  | AnyType
+  | Pipe
   | Null
   | Escaped Char -- Keep?: depends on what this is for
   deriving (Eq, Show)
@@ -229,7 +238,14 @@ keywords =
     ("if", If),
     ("else", Else),
     ("return", Return),
-    ("null", Null)
+    ("null", Null),
+    ("Int", IntType), -- needs its own TokenType
+    ("String", StringType),
+    ("Bool", BoolType), -- missing!
+    ("Float", FloatType),
+    ("Void", VoidType), -- missing!
+    ("Struct", StructType),
+    ("Any", AnyType)
   ]
 
 lookupIdent :: String -> TokenType
@@ -243,7 +259,7 @@ identifiderAndKeywordsLexer = lookupIdent <$> ident
 -- Symbol Lexers
 
 specialSymbols :: [(Char, TokenType)]
-specialSymbols = [('(', LParen), (')', RParen), ('[', LBracket), (']', RBracket), ('}', RBrace), ('{', LBrace), (';', Semicolon), (':', Colon), (',', Comma), ('-', Minus), ('+', Plus), ('*', Asterisk), ('<', LessThan), ('>', GreaterThan), ('/', Slash)]
+specialSymbols = [('(', LParen), (')', RParen), ('[', LBracket), (']', RBracket), ('}', RBrace), ('{', LBrace), (';', Semicolon), (':', Colon), (',', Comma), ('-', Minus), ('+', Plus), ('*', Asterisk), ('<', LessThan), ('>', GreaterThan), ('/', Slash), ('|', Pipe)]
 
 symbolMap :: [Char]
 symbolMap = map fst specialSymbols

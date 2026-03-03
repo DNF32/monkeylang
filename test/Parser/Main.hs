@@ -9,12 +9,20 @@ import Debug.Trace
 import Parser
 import Test.Hspec
 import Token (LexerState (..), Position (..), Token (..), TokenType (..), runLexer, tokenizer, tokenizerAll)
+import TypeChecker
 
 initialState :: String -> LexerState
 initialState input = LexerState {getInput = input, currentPosition = Position {_line = 1, _column = 1}}
 
+identityType :: Type
+identityType = IntT
+
 main :: IO ()
-main = hspec spec
+main = hspec $ do
+  spec
+  specOpPrecedence
+  literalTest
+  callExpr
 
 specOpPrecedence :: Spec
 specOpPrecedence = do
@@ -83,11 +91,11 @@ spec = do
               testReturnStatementSpec exprPredicate (head stmts)
     describe "prefix expression" $ do
       let testCases =
-            [ ("!that", isBangWithExpr (IdentifierLit identityToken "that")),
+            [ ("!that", isBangWithExpr (IdentifierLit identityToken "that" Nothing)),
               ("-10", isMinusWithExpr (IntLit identityToken 10)),
               ("!true", isBangWithExpr (BooleanLit identityToken True)),
               ("!false", isBangWithExpr (BooleanLit identityToken False)),
-              ("!False", isBangWithExpr (IdentifierLit identityToken "False"))
+              ("!False", isBangWithExpr (IdentifierLit identityToken "False" Nothing))
             ]
       forM_ testCases $ \(input, exprPredicate) -> do
         describe ("parsing: " ++ input) $ do
@@ -150,7 +158,7 @@ literalTest = do
         it "should parse index expression correctly" $
           case head stmts of
             ExpressionStatement _ expr@(IndexExpression _ left indexExpr) -> do
-              expr `shouldSatisfy` (?== IndexExpression identityToken (IdentifierLit identityToken "myarray") (InfixExpression identityToken (IntLit identityToken 1) Plus (IntLit identityToken 1)))
+              expr `shouldSatisfy` (?== IndexExpression identityToken (IdentifierLit identityToken "myarray" Nothing) (InfixExpression identityToken (IntLit identityToken 1) Plus (IntLit identityToken 1)))
             _ -> expectationFailure "Expected IndexExpression"
 
   describe "function literal" $ do
@@ -162,11 +170,11 @@ literalTest = do
       Right (Program stmts, _) ->
         it "should parse function literal correctly" $
           case head stmts of
-            ExpressionStatement _ (FunctionLit _ parameters body) -> do
+            ExpressionStatement _ (FunctionLit _ parameters _ body) -> do
               parameters
                 `shouldSatisfy` ( \ps ->
                                     length ps == 2
-                                      && and (zipWith (?==) ps [IdentifierLit identityToken "x", IdentifierLit identityToken "y"])
+                                      && and (zipWith (?==) ps [IdentifierLit identityToken "x" Nothing, IdentifierLit identityToken "y" Nothing])
                                 )
               length body `shouldBe` 1
               case head body of
@@ -188,12 +196,12 @@ callExpr = do
           case head stmts of
             ExpressionStatement _ (CallExpression _ function args) ->
               case function of
-                IdentifierLit _ name -> do
+                IdentifierLit _ name _ -> do
                   name `shouldBe` "call"
                   args
                     `shouldSatisfy` ( \ps ->
                                         length ps == 2
-                                          && and (zipWith (?==) ps [IdentifierLit identityToken "x", IdentifierLit identityToken "y"])
+                                          && and (zipWith (?==) ps [IdentifierLit identityToken "x" Nothing, IdentifierLit identityToken "y" Nothing])
                                     )
                 _ -> expectationFailure "Expected IdentifierLit"
             _ -> expectationFailure "Expected CallExpression"
@@ -212,7 +220,7 @@ callExpr = do
                   args
                     `shouldSatisfy` ( \ps ->
                                         length ps == 2
-                                          && and (zipWith (?==) ps [IdentifierLit identityToken "x", IdentifierLit identityToken "y"])
+                                          && and (zipWith (?==) ps [IdentifierLit identityToken "x" (Just IntT), IdentifierLit identityToken "y" (Just IntT)])
                                     )
                 _ -> expectationFailure "Expected FunctionLit"
             _ -> expectationFailure "Expected CallExpression"
@@ -294,7 +302,7 @@ isFloatLitWith expected (FloatLit _ val) = val == expected
 isFloatLitWith _ _ = False
 
 isIdentifier :: String -> Expression -> Bool
-isIdentifier expected (IdentifierLit _ name) = name == expected
+isIdentifier expected (IdentifierLit _ name _) = name == expected
 isIdentifier _ _ = False
 
 isStringLit :: String -> Expression -> Bool

@@ -10,16 +10,13 @@ import Token
 mockLexerState :: LexerState
 mockLexerState = LexerState {getInput = "\nthis", currentPosition = Position {_line = 1, _column = 1}}
 
-initialState :: String -> LexerState
-initialState input = LexerState {getInput = input, currentPosition = Position {_line = 1, _column = 1}}
-
 runAndGetPosition :: Lexer a -> String -> Either LexError Position
 runAndGetPosition la input = case runLexer la (initialState input) of
   Right (_, state) -> Right (currentPosition state)
   Left err -> Left err
 
 main :: IO ()
-main = putStrLn "that"
+main = hspec spec
 
 spec :: Spec
 spec = do

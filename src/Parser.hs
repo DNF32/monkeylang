@@ -7,9 +7,11 @@ import Control.Applicative (Alternative (..))
 import Control.Lens
 import Data.Char (GeneralCategory (LowercaseLetter))
 import Data.List (intercalate)
+import Data.Map qualified as Map
 import Debug.Trace
 import SimpleParser
 import Token
+import TypeChecker
 
 data AstParserError
   = SyntaxError ParserError
@@ -74,6 +76,9 @@ peekToken = SimpleParser $ \state ->
   case runLexer tokenizer state of
     Right (tok, _) -> Right (tok, state) -- Don't consume, just peek
     Left err -> Left (TokenError err)
+
+getCurrentPosition :: AstParser Position
+getCurrentPosition = SimpleParser $ \state -> Right (currentPosition state, state)
 
 parseIndentifierExpression :: AstParser Expression
 parseIndentifierExpression =
@@ -173,24 +178,30 @@ parseGroupExpression :: AstParser Expression
 parseGroupExpression = isToken LParen *> parseExpressionRbp LOWEST <* isToken RParen
 
 parseCallExpression :: Expression -> AstParser Expression
-parseCallExpression expr@(IdentifierLit tok _) = CallExpression tok expr <$> parseArgs
-parseCallExpression expr@(FunctionLit tok _ _) = CallExpression tok expr <$> parseArgs
+parseCallExpression expr@(IdentifierLit tok _ _) = CallExpression tok expr <$> parseArgs
+parseCallExpression expr@(FunctionLit tok _ _ _) = CallExpression tok expr <$> parseArgs
 parseCallExpression expr@(CallExpression tok _ _) = CallExpression tok expr <$> parseArgs
 parseCallExpression expr =
   newParserWithError
     ("Tried to create a Call expression without IdentifierLit or Function Lit, found :" ++ show (expr ^. exprToken . tokenType))
     (expr ^. exprToken . tokenPosition)
 
-parseParameters :: AstParser [Expression]
-parseParameters = choice [parseZeroParameters, parseOneOrMoreParameter]
-
-parseOneOrMoreParameter :: AstParser [Expression]
-parseOneOrMoreParameter = isToken LParen *> parseOneOrMoreParameter' <* isToken RParen
+parseParameters :: AstParser [(Expression, Maybe Type)]
+parseParameters = isToken LParen *> sepBy parseParam (isToken Comma) <* isToken RParen
   where
-    parseOneOrMoreParameter' = (:) <$> parseIndentifierExpression <*> zeroOrMore (isToken Comma *> parseIndentifierExpression)
+    parseParam = (,) <$> parseIndentifierExpression <*> optional parseTypeHint
 
-parseZeroParameters :: AstParser [Expression]
-parseZeroParameters = isToken LParen *> isToken RParen *> pure []
+--
+-- parseParameters :: AstParser [Expression]
+-- parseParameters = choice [parseZeroParameters, parseOneOrMoreParameter]
+
+-- parseOneOrMoreParameter :: AstParser [Expression]
+-- parseOneOrMoreParameter = isToken LParen *> parseOneOrMoreParameter' <* isToken RParen
+--  where
+--    parseOneOrMoreParameter' = (:) <$> parseIndentifierExpression <*> zeroOrMore (isToken Comma *> parseIndentifierExpression)
+--
+-- parseZeroParameters :: AstParser [Expression]
+-- parseZeroParameters = isToken LParen *> isToken RParen *> pure []
 
 parseArgs :: AstParser [Expression]
 parseArgs = isToken LParen *> choice [parseZeroExprs RParen, parseOneOrMoreExprs RParen]
@@ -216,12 +227,13 @@ parseFunctionLiteral :: AstParser Expression
 parseFunctionLiteral = do
   fn <- isToken Function
   parameters <- parseParameters
+  returnType <- optional parseTypeHint
   _ <- isToken LBrace
   stmts <- parseBlockStatement
   _ <- isToken RBrace
   case stmts of
     BlockStatement stmts' ->
-      return $ FunctionLit fn parameters stmts'
+      return $ FunctionLit fn parameters returnType stmts'
     _ -> error "parseBlockStatement should always return BlockStatement"
 
 parseIndexExpression :: Expression -> AstParser Expression
@@ -311,13 +323,61 @@ continueInfix precedence leftExpr = do
     _ -> return leftExpr
 
 parseLetStatement :: AstParser Statement
-parseLetStatement =
-  LetStatement
-    <$> isToken Let
-    <*> parseIndentifierExpression
-    <* isToken Assign
-    <*> parseExpressionRbp LOWEST
-    <* optional (isToken Semicolon)
+parseLetStatement = do
+  tok <- isToken Let
+  ident <- parseIndentifierExpression
+  typeHint <- optional parseTypeHint
+  _ <- isToken Assign
+  expr <- parseExpressionRbp LOWEST
+  _ <- optional (isToken Semicolon)
+  return (LetStatement tok expr typeHint expr)
+
+parseTypeHint :: AstParser Type
+parseTypeHint = do
+  _ <- isToken Colon
+  parseBaseType
+
+parseBaseType :: AstParser Type
+parseBaseType =
+  choice
+    [ parseNative,
+      parseUnresolvedStruct
+    ]
+
+parseNative :: AstParser Type
+parseNative = do
+  choice (map toParser tokenToType)
+  where
+    tokenToType :: [(TokenType, Type)]
+    tokenToType =
+      [ (IntType, IntT),
+        (StringType, StringT),
+        (BoolType, BoolT),
+        (FloatType, FloatT), -- need FloatT in your Type!
+        (VoidType, VoidT),
+        (AnyType, AnyT)
+      ]
+    toParser (tokenT, t) = t <$ isToken tokenT
+
+parseUnresolvedStruct :: AstParser Type
+parseUnresolvedStruct = do
+  pos <- getCurrentPosition
+  expr <- parseIndentifierExpression
+  case expr of
+    IdentifierLit _ name _ -> return (StructT name Map.empty)
+    _ -> newParserWithError "Expected type name" pos
+
+-- parseArrayTypeHint :: AstParser Token
+-- parseArrayTypeHint = do
+--  _ <- isToken Colon
+--  _ <- isToken LBracket
+--  _ <- isToken RBracket
+--  - <- parseTypeHint
+
+-- parseLetStatement' :: AstParser Statement
+-- parseLetStatement' = do
+--    <- isToken Let
+--    ident <- parseIndentifierExpression
 
 parseReturnStatement :: AstParser Statement
 parseReturnStatement = ReturnStatement <$> isToken Return <*> parseExpressionRbp LOWEST <* optional (isToken Semicolon)
