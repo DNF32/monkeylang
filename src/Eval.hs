@@ -45,7 +45,7 @@ data Object
   | BoolObj Bool
   | FloatObj Float
   | StringObj String
-  | FunctionObj [(Expression, Maybe Type)] [Statement] Enviroment
+  | FunctionObj [Expression] [Statement] Enviroment
   | NullObj
   | ArrayObj [Object]
   | ReturnObj Object
@@ -172,7 +172,7 @@ evalBlockStatement (s1 : ss) = do
     _ -> return voidObj
 
 evalLetStatement :: Statement -> Eval Object
-evalLetStatement (LetStatement _ (IdentifierLit _ name _) _ value) = do
+evalLetStatement (LetStatement _ (IdentifierLit _ name _) value) = do
   obj <- unwrapReturnObj <$> evalExpression value
   case obj of
     ErrorObj _ -> return obj
@@ -255,7 +255,7 @@ evalExpression (InfixExpression (Token _ pos) left operator right) = do
       ErrorObj _ -> withPos pos obj
       _ -> obj
 evalExpression (FunctionLit (Token _ pos) parameters _ body) = do
-  if all isIdentifierLit (map fst parameters)
+  if all isIdentifierLit parameters
     then do
       env <- get
       return (FunctionObj parameters body env)
@@ -322,7 +322,7 @@ evalExpression (IndexExpression (Token _ pos) left indexExpr) = do
         )
 evalExpression expr = return (ErrorObj (TypeError ("Unhandled expression: " ++ show expr) (Just (expr ^. exprToken . tokenPosition))))
 
-functionEval :: [(Expression, Maybe Type)] -> [Statement] -> Enviroment -> [Expression] -> Eval Object
+functionEval :: [Expression] -> [Statement] -> Enviroment -> [Expression] -> Eval Object
 functionEval params body env args
   | length params /= length args = return (ErrorObj (InvalidFunctionCall Nothing))
   | otherwise = do
@@ -331,7 +331,7 @@ functionEval params body env args
         then return (head (filter isError evaluatedArgs))
         else do
           oldEnv <- get
-          put (extendedEnv env (map fst params) evaluatedArgs)
+          put (extendedEnv env params evaluatedArgs)
           result <- evalBlockStatement body
           put oldEnv
           return result

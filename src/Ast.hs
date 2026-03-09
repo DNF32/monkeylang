@@ -55,7 +55,7 @@ data Expression
   | NullLit {token :: Token}
   | PrefixExpression {token :: Token, operator :: Operator, right :: Expression}
   | InfixExpression {token :: Token, left :: Expression, operator :: Operator, right :: Expression}
-  | FunctionLit {token :: Token, parameters :: [(Expression, Maybe Type)], returnType :: Maybe Type, body :: [Statement], fnType :: Maybe Type} -- Expression!
+  | FunctionLit {token :: Token, parameters :: [Expression], returnType :: Maybe Type, body :: [Statement]} -- Expression!
   | CallExpression {token :: Token, function :: Expression, arguments :: [Expression]}
   | IndexExpression {token :: Token, left :: Expression, index :: Expression}
   | IfExpression {token :: Token, condition :: Expression, consequence :: [Statement], alternative :: Maybe [Statement]}
@@ -67,7 +67,7 @@ infix 4 ?==
 IntLit {intValue = lhs} ?== IntLit {intValue = rhs} = lhs == rhs
 FloatLit {floatValue = lhs} ?== FloatLit {floatValue = rhs} = lhs == rhs
 StringLit {stringValue = lhs} ?== StringLit {stringValue = rhs} = lhs == rhs
-IdentifierLit {name = lhs} ?== IdentifierLit {name = rhs} = lhs == rhs
+IdentifierLit {name = lhs, ann = lhsTy} ?== IdentifierLit {name = rhs, ann = rhsTy} = lhs == rhs && lhsTy == rhsTy
 ArrayLit {elements = lhs} ?== ArrayLit {elements = rhs} = expressionsEqual lhs rhs
 BooleanLit {value = lhs} ?== BooleanLit {value = rhs} = lhs == rhs
 PrefixExpression {operator = lop, right = lr} ?== PrefixExpression {operator = rop, right = rr} =
@@ -75,7 +75,7 @@ PrefixExpression {operator = lop, right = lr} ?== PrefixExpression {operator = r
 InfixExpression {left = ll, operator = lop, right = lr} ?== InfixExpression {left = rl, operator = rop, right = rr} =
   lop == rop && ll ?== rl && lr ?== rr
 FunctionLit {parameters = lp, body = lb} ?== FunctionLit {parameters = rp, body = rb} =
-  expressionsEqual (map fst lp) (map fst rp) && statementsEqual lb rb
+  expressionsEqual lp rp && statementsEqual lb rb
 CallExpression {function = lf, arguments = la} ?== CallExpression {function = rf, arguments = ra} =
   lf ?== rf && expressionsEqual la ra
 IndexExpression {left = ll, index = li} ?== IndexExpression {left = rl, index = ri} =
@@ -87,7 +87,7 @@ _ ?== _ = False
 
 data Statement
   = Program {statements :: [Statement]}
-  | LetStatement {token :: Token, name :: Expression, typeHint :: Maybe Type, value :: Expression} -- Expression!
+  | LetStatement {token :: Token, name :: Expression, value :: Expression} -- Expression!
   | ReturnStatement {token :: Token, result :: Expression}
   | ExpressionStatement {token :: Token, expr :: Expression}
   | BlockStatement {statements :: [Statement]}
@@ -170,7 +170,7 @@ infixToPrecedence token = case token of
   otherwise -> LOWEST
 
 statementToString :: Statement -> String
-statementToString (LetStatement _ name _ value) = "let " ++ expressionToString name ++ " = " ++ expressionToString value
+statementToString (LetStatement _ name value) = "let " ++ expressionToString name ++ " = " ++ expressionToString value
 statementToString (ReturnStatement _ value) = "return " ++ expressionToString value
 statementToString (ExpressionStatement _ value) = expressionToString value
 statementToString (BlockStatement stmts) = intercalate "" (map statementToString stmts)
@@ -178,7 +178,7 @@ statementToString (Program stmts) = intercalate "" (map statementToString stmts)
 
 prettyPrintStatement :: Int -> Statement -> String
 prettyPrintStatement indent stmt = case stmt of
-  LetStatement _ name _ value ->
+  LetStatement _ name value ->
     spaces indent
       ++ "LetStatement\n"
       ++ spaces (indent + 2)
@@ -250,7 +250,7 @@ prettyPrintExpression indent expr = case expr of
       ++ "FunctionLit\n"
       ++ spaces (indent + 2)
       ++ "parameters: ["
-      ++ intercalate ", " (map (expressionToString . fst) params)
+      ++ intercalate ", " (map expressionToString params)
       ++ "]\n"
       ++ spaces (indent + 2)
       ++ "body:\n"

@@ -73,6 +73,16 @@ spec = do
                 expectationFailure ("Parser failed: " ++ show err)
             Right (Program stmts, _) ->
               testLetStatementSpec expectedId exprPredicate (head stmts)
+    describe "let statment with type hint" $ do
+      it "parses let x : Int = 5; correctly" $ do
+        let state = initialState "let x : Int = 5;"
+        case runAstParser parseProgram state of
+          Left err ->
+            expectationFailure ("Parser failed: " ++ show err)
+          Right (Program stmts, _) ->
+            case head stmts of
+              LetStatement _ (IdentifierLit _ "x" (Just IntT)) _ -> return ()
+              stmt -> expectationFailure ("Expected LetStatement with type hint, got: " ++ statementToString stmt)
 
     describe "return statement" $ do
       let testCases =
@@ -181,6 +191,40 @@ literalTest = do
                 ExpressionStatement _ expr ->
                   expr `shouldSatisfy` isIntLitWithValue 5
                 _ -> expectationFailure "Expected ExpressionStatement in body"
+            _ -> expectationFailure "Expected FunctionLit"
+  describe "function literal with type hint" $ do
+    let state = initialState "fn(x:Int,y){5;}"
+    case runAstParser parseProgram state of
+      Left err ->
+        it "should parse successfully" $
+          expectationFailure ("Parser failed: " ++ show err)
+      Right (Program stmts, _) ->
+        it "should parse function literal correctly" $
+          case head stmts of
+            ExpressionStatement _ (FunctionLit _ parameters _ body) -> do
+              parameters
+                `shouldSatisfy` ( \ps ->
+                                    length ps == 2
+                                      && and (zipWith (?==) ps [IdentifierLit identityToken "x" (Just IntT), IdentifierLit identityToken "y" Nothing])
+                                )
+              length body `shouldBe` 1
+              case head body of
+                ExpressionStatement _ expr ->
+                  expr `shouldSatisfy` isIntLitWithValue 5
+                _ -> expectationFailure "Expected ExpressionStatement in body"
+            _ -> expectationFailure "Expected FunctionLit"
+  describe "function literal with return type" $ do
+    let state = initialState "fn(x,y): Int{5;}"
+    case runAstParser parseProgram state of
+      Left err ->
+        it "should parse successfully" $
+          expectationFailure ("Parser failed: " ++ show err)
+      Right (Program stmts, _) ->
+        it "should parse function literal correctly" $
+          case head stmts of
+            ExpressionStatement _ (FunctionLit _ parameters returnType body) -> do
+              returnType
+                `shouldBe` (Just IntT)
             _ -> expectationFailure "Expected FunctionLit"
 
 callExpr :: Spec

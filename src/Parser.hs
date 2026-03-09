@@ -91,8 +91,18 @@ parseIndentifierExpression =
     tokenToLit tok@(Token (Identifier name) _) =
       IdentifierLit
         { name = name,
-          token = tok
+          token = tok,
+          ann = Nothing
         }
+
+parseIdentifierExpressionWithTypeHint :: AstParser Expression
+parseIdentifierExpressionWithTypeHint = identifierWithTypeHint <$> parseIndentifierExpression <*> optional parseTypeHint
+
+identifierWithTypeHint :: Expression -> Maybe Type -> Expression
+identifierWithTypeHint identifier@(IdentifierLit {}) ty =
+  identifier {ann = ty}
+identifierWithTypeHint expr _ =
+  error $ "identifierWithTypeHint called on non-IdentifierLit: " ++ show expr
 
 parseIntExpression :: AstParser Expression
 parseIntExpression =
@@ -186,10 +196,8 @@ parseCallExpression expr =
     ("Tried to create a Call expression without IdentifierLit or Function Lit, found :" ++ show (expr ^. exprToken . tokenType))
     (expr ^. exprToken . tokenPosition)
 
-parseParameters :: AstParser [(Expression, Maybe Type)]
-parseParameters = isToken LParen *> sepBy parseParam (isToken Comma) <* isToken RParen
-  where
-    parseParam = (,) <$> parseIndentifierExpression <*> optional parseTypeHint
+parseParameters :: AstParser [Expression]
+parseParameters = isToken LParen *> sepBy parseIdentifierExpressionWithTypeHint (isToken Comma) <* isToken RParen
 
 --
 -- parseParameters :: AstParser [Expression]
@@ -325,12 +333,11 @@ continueInfix precedence leftExpr = do
 parseLetStatement :: AstParser Statement
 parseLetStatement = do
   tok <- isToken Let
-  ident <- parseIndentifierExpression
-  typeHint <- optional parseTypeHint
+  identifier <- parseIdentifierExpressionWithTypeHint
   _ <- isToken Assign
   expr <- parseExpressionRbp LOWEST
   _ <- optional (isToken Semicolon)
-  return (LetStatement tok expr typeHint expr)
+  return (LetStatement tok identifier expr)
 
 parseTypeHint :: AstParser Type
 parseTypeHint = do
