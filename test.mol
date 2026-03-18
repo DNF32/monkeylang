@@ -1,6 +1,0 @@
-let add = fn(x, y) { return x + y; };
-let multiply = fn(x, y) { return x * y; };
-let compose = fn(f, g, x) { return f(g(x, x), x); };
-let result = compose(add, multiply, 3);
-result;
-

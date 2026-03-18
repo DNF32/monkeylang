@@ -6,6 +6,12 @@
 module Ast
   ( Expression (..),
     Statement (..),
+    TExpression (..),
+    TStatement (..),
+    Param (..),
+    TParam (..),
+    FieldDecl (..),
+    getType,
     (?==),
     Precedence (..),
     prettyPrintStatement,
@@ -13,35 +19,13 @@ module Ast
     statementToString,
     infixToPrecedence,
     -- Expression lenses
-    exprToken,
-    exprIntValue,
-    exprFloatValue,
-    exprStringValue,
-    exprName,
-    exprBoolValue,
-    exprOperator,
-    exprRight,
-    exprLeft,
-    exprParameters,
-    exprBody,
-    exprFunction,
-    exprArguments,
-    exprIndex,
-    exprElements,
     -- Statement lenses
-    stmtToken,
-    stmtName,
-    stmtValue,
-    stmtResult,
-    stmtExpr,
-    stmtStatements,
   )
 where
 
-import Control.Lens
 import Data.List (intercalate)
-import Token (LexerState (currentPosition), Token (..), TokenType (..), tokenType)
-import TypeChecker
+import Token (Token (..), TokenType (..))
+import Types
 
 type Operator = TokenType
 
@@ -49,109 +33,42 @@ data Expression
   = IntLit {token :: Token, intValue :: Int}
   | FloatLit {token :: Token, floatValue :: Float}
   | StringLit {token :: Token, stringValue :: String}
-  | IdentifierLit {token :: Token, name :: String, ann :: Maybe Type}
+  | IdentifierLit {token :: Token, name :: String}
   | ArrayLit {token :: Token, elements :: [Expression]}
   | BooleanLit {token :: Token, value :: Bool}
   | NullLit {token :: Token}
   | PrefixExpression {token :: Token, operator :: Operator, right :: Expression}
   | InfixExpression {token :: Token, left :: Expression, operator :: Operator, right :: Expression}
-  | FunctionLit {token :: Token, parameters :: [Expression], returnType :: Maybe Type, body :: [Statement]} -- Expression!
+  | FunctionLit {token :: Token, parameters :: [Param], returnType :: Maybe Type, body :: [Statement]} -- Expression!
   | CallExpression {token :: Token, function :: Expression, arguments :: [Expression]}
   | IndexExpression {token :: Token, left :: Expression, index :: Expression}
   | IfExpression {token :: Token, condition :: Expression, consequence :: [Statement], alternative :: Maybe [Statement]}
   deriving (Eq, Show)
 
-infix 4 ?==
+data Param = Param
+  { paramToken :: Token,
+    paramName :: String,
+    paramType :: Maybe Type
+  }
+  deriving (Eq, Show)
 
-(?==) :: Expression -> Expression -> Bool
-IntLit {intValue = lhs} ?== IntLit {intValue = rhs} = lhs == rhs
-FloatLit {floatValue = lhs} ?== FloatLit {floatValue = rhs} = lhs == rhs
-StringLit {stringValue = lhs} ?== StringLit {stringValue = rhs} = lhs == rhs
-IdentifierLit {name = lhs, ann = lhsTy} ?== IdentifierLit {name = rhs, ann = rhsTy} = lhs == rhs && lhsTy == rhsTy
-ArrayLit {elements = lhs} ?== ArrayLit {elements = rhs} = expressionsEqual lhs rhs
-BooleanLit {value = lhs} ?== BooleanLit {value = rhs} = lhs == rhs
-PrefixExpression {operator = lop, right = lr} ?== PrefixExpression {operator = rop, right = rr} =
-  lop == rop && lr ?== rr
-InfixExpression {left = ll, operator = lop, right = lr} ?== InfixExpression {left = rl, operator = rop, right = rr} =
-  lop == rop && ll ?== rl && lr ?== rr
-FunctionLit {parameters = lp, body = lb} ?== FunctionLit {parameters = rp, body = rb} =
-  expressionsEqual lp rp && statementsEqual lb rb
-CallExpression {function = lf, arguments = la} ?== CallExpression {function = rf, arguments = ra} =
-  lf ?== rf && expressionsEqual la ra
-IndexExpression {left = ll, index = li} ?== IndexExpression {left = rl, index = ri} =
-  ll ?== rl && li ?== ri
-IfExpression {condition = lc, consequence = lcons, alternative = lalt}
-  ?== IfExpression {condition = rc, consequence = rcons, alternative = ralt} =
-    lc ?== rc && statementsEqual lcons rcons && maybeStatementsEqual lalt ralt
-_ ?== _ = False
+data FieldDecl = FieldDecl
+  { fieldToken :: Token,
+    fieldName  :: String,
+    fieldType  :: Type
+  }
+  deriving (Eq, Show)
+
+infix 4 ?==
 
 data Statement
   = Program {statements :: [Statement]}
-  | LetStatement {token :: Token, name :: Expression, value :: Expression} -- Expression!
-  | ReturnStatement {token :: Token, result :: Expression}
-  | ExpressionStatement {token :: Token, expr :: Expression}
+  | LetStatement {stmtToken :: Token, name :: Expression, value :: Expression, ann :: Maybe Type}
+  | ReturnStatement {stmtToken :: Token, result :: Expression}
+  | ExpressionStatement {stmtToken :: Token, expr :: Expression}
   | BlockStatement {statements :: [Statement]}
+  | StructDecl {stmtToken :: Token, structName :: String, fields :: [FieldDecl]}
   deriving (Eq, Show)
-
-expressionsEqual :: [Expression] -> [Expression] -> Bool
-expressionsEqual [] [] = True
-expressionsEqual (lhs : restLhs) (rhs : restRhs) =
-  lhs ?== rhs && expressionsEqual restLhs restRhs
-expressionsEqual _ _ = False
-
-statementsEqual :: [Statement] -> [Statement] -> Bool
-statementsEqual [] [] = True
-statementsEqual (lhs : restLhs) (rhs : restRhs) =
-  statementEqual lhs rhs && statementsEqual restLhs restRhs
-statementsEqual _ _ = False
-
-statementEqual :: Statement -> Statement -> Bool
-statementEqual (Program {statements = lhs}) (Program {statements = rhs}) =
-  statementsEqual lhs rhs
-statementEqual LetStatement {name = lhsName, value = lhsValue} LetStatement {name = rhsName, value = rhsValue} =
-  lhsName ?== rhsName && lhsValue ?== rhsValue
-statementEqual ReturnStatement {result = lhsResult} ReturnStatement {result = rhsResult} =
-  lhsResult ?== rhsResult
-statementEqual ExpressionStatement {expr = lhsExpr} ExpressionStatement {expr = rhsExpr} =
-  lhsExpr ?== rhsExpr
-statementEqual BlockStatement {statements = lhs} BlockStatement {statements = rhs} =
-  statementsEqual lhs rhs
-statementEqual _ _ = False
-
-maybeStatementsEqual :: Maybe [Statement] -> Maybe [Statement] -> Bool
-maybeStatementsEqual Nothing Nothing = True
-maybeStatementsEqual (Just lhs) (Just rhs) = statementsEqual lhs rhs
-maybeStatementsEqual _ _ = False
-
-makeLensesFor
-  [ ("token", "exprToken"),
-    ("intValue", "exprIntValue"),
-    ("floatValue", "exprFloatValue"),
-    ("stringValue", "exprStringValue"),
-    ("name", "exprName"),
-    ("value", "exprBoolValue"), -- BooleanLit only
-    ("operator", "exprOperator"),
-    ("right", "exprRight"),
-    ("left", "exprLeft"),
-    ("parameters", "exprParameters"),
-    ("body", "exprBody"),
-    ("function", "exprFunction"),
-    ("arguments", "exprArguments"),
-    ("index", "exprIndex"),
-    ("elements", "exprElements")
-  ]
-  ''Expression
-
--- Statement lenses
-makeLensesFor
-  [ ("token", "stmtToken"),
-    ("name", "stmtName"),
-    ("value", "stmtValue"),
-    ("result", "stmtResult"),
-    ("expr", "stmtExpr"),
-    ("statements", "stmtStatements")
-  ]
-  ''Statement
 
 data Precedence = LOWEST | EQUALS | LESSGREATER | SUM | PRODUCT | PREFIX | CALL | INDEX deriving (Ord, Eq, Show)
 
@@ -170,7 +87,7 @@ infixToPrecedence token = case token of
   otherwise -> LOWEST
 
 statementToString :: Statement -> String
-statementToString (LetStatement _ name value) = "let " ++ expressionToString name ++ " = " ++ expressionToString value
+statementToString (LetStatement _ name value ann) = "let " ++ expressionToString name ++ show ann ++ " = " ++ expressionToString value
 statementToString (ReturnStatement _ value) = "return " ++ expressionToString value
 statementToString (ExpressionStatement _ value) = expressionToString value
 statementToString (BlockStatement stmts) = intercalate "" (map statementToString stmts)
@@ -178,12 +95,14 @@ statementToString (Program stmts) = intercalate "" (map statementToString stmts)
 
 prettyPrintStatement :: Int -> Statement -> String
 prettyPrintStatement indent stmt = case stmt of
-  LetStatement _ name value ->
+  LetStatement _ name value ann ->
     spaces indent
       ++ "LetStatement\n"
       ++ spaces (indent + 2)
       ++ "name: "
       ++ expressionToString name
+      ++ "ann: "
+      ++ show ann
       ++ "\n"
       ++ spaces (indent + 2)
       ++ "value:\n"
@@ -216,7 +135,7 @@ prettyPrintExpression indent expr = case expr of
     spaces indent ++ "StringLit: " ++ show value ++ "\n"
   NullLit _ ->
     spaces indent ++ "NullLit\n"
-  IdentifierLit _ value _ ->
+  IdentifierLit _ value ->
     spaces indent ++ "IdentifierLit: " ++ value ++ "\n"
   BooleanLit _ value ->
     spaces indent ++ "BooleanLit: " ++ show value ++ "\n"
@@ -250,7 +169,7 @@ prettyPrintExpression indent expr = case expr of
       ++ "FunctionLit\n"
       ++ spaces (indent + 2)
       ++ "parameters: ["
-      ++ intercalate ", " (map expressionToString params)
+      ++ intercalate ", " (map renderParam params)
       ++ "]\n"
       ++ spaces (indent + 2)
       ++ "body:\n"
@@ -290,12 +209,13 @@ prettyPrintExpression indent expr = case expr of
             ++ intercalate "" (map (prettyPrintStatement (indent + 4)) alt)
   where
     spaces n = replicate n ' '
+    renderParam (Param _ name ty) = name ++ maybe "" (\t -> ": " ++ show t) ty
 
 expressionToString :: Expression -> String
 expressionToString (IntLit _ val) = show val
 expressionToString (FloatLit _ val) = show val
 expressionToString (StringLit _ val) = val
-expressionToString (IdentifierLit _ val _) = val
+expressionToString (IdentifierLit _ val) = val
 expressionToString (BooleanLit _ val) = show val
 expressionToString (ArrayLit _ elements) = "[" ++ intercalate ", " (map expressionToString elements) ++ "]"
 expressionToString (PrefixExpression _ Bang val) = "(" ++ "!" ++ expressionToString val ++ ")"
@@ -308,3 +228,95 @@ expressionToString (InfixExpression _ left LessThan right) = "(" ++ expressionTo
 expressionToString (InfixExpression _ left GreaterThan right) = "(" ++ expressionToString left ++ " > " ++ expressionToString right ++ ")"
 expressionToString (InfixExpression _ left Equal right) = "(" ++ expressionToString left ++ " == " ++ expressionToString right ++ ")"
 expressionToString (InfixExpression _ left NotEqual right) = "(" ++ expressionToString left ++ " != " ++ expressionToString right ++ ")"
+
+-- ============================================================
+-- Typed AST
+-- ============================================================
+
+data TExpression
+  = TIntLit {tToken :: Token, tIntValue :: Int, ty :: Type}
+  | TFloatLit {tToken :: Token, tFloatValue :: Float, ty :: Type}
+  | TStringLit {tToken :: Token, tStringValue :: String, ty :: Type}
+  | TBoolLit {tToken :: Token, tBoolValue :: Bool, ty :: Type}
+  | TNullLit {tToken :: Token, ty :: Type}
+  | TIdentifierLit {tToken :: Token, tName :: String, ty :: Type}
+  | TPrefixExpression {tToken :: Token, operator :: Operator, right :: TExpression, ty :: Type}
+  | TInfixExpression {tToken :: Token, left :: TExpression, operator :: Operator, right :: TExpression, ty :: Type}
+  | TFunctionLit {tToken :: Token, parameters :: [TParam], returnType :: Type, body :: [TStatement], ty :: Type} -- Expression!
+  | TCallExpression {tToken :: Token, function :: TExpression, arguments :: [TExpression]}
+  | TIndexExpression {tToken :: Token, left :: TExpression, index :: TExpression}
+  | TIfExpression {tToken :: Token, condition :: TExpression, consequence :: [TStatement], alternative :: Maybe [TStatement], ty :: Type}
+  deriving (Eq, Show)
+
+data TStatement
+  = TProgram {tStatements :: [TStatement]}
+  | TLetStatement {tLetToken :: Token, tLetName :: TExpression, tLetValue :: TExpression, tLetType :: Type}
+  | TReturnStatement {tReturnToken :: Token, tResult :: TExpression}
+  | TExpressionStatement {tStmtToken :: Token, tExpr :: TExpression}
+  | TBlockStatement {tBlockStatements :: [TStatement]}
+  | TStructDecl {tStmtToken :: Token, structName :: String, fields :: [FieldDecl]}
+  deriving (Eq, Show)
+
+data TParam = TParam
+  { tParamToken :: Token,
+    tParamName :: String,
+    tParamType :: Type
+  }
+  deriving (Eq, Show)
+
+getType :: TExpression -> Type
+getType = ty
+
+class AstEq a where
+  (?==) :: a -> a -> Bool
+
+instance AstEq Expression where
+  IntLit {intValue = l} ?== IntLit {intValue = r} = l == r
+  FloatLit {floatValue = l} ?== FloatLit {floatValue = r} = l == r
+  StringLit {stringValue = l} ?== StringLit {stringValue = r} = l == r
+  IdentifierLit {name = l} ?== IdentifierLit {name = r} = l == r
+  ArrayLit {elements = l} ?== ArrayLit {elements = r} = l ?== r
+  BooleanLit {value = l} ?== BooleanLit {value = r} = l == r
+  PrefixExpression {operator = lo, right = lr} ?== PrefixExpression {operator = ro, right = rr} =
+    lo == ro && lr ?== rr
+  InfixExpression {left = ll, operator = lo, right = lr} ?== InfixExpression {left = rl, operator = ro, right = rr} =
+    lo == ro && ll ?== rl && lr ?== rr
+  FunctionLit {parameters = lp, body = lb} ?== FunctionLit {parameters = rp, body = rb} =
+    lp ?== rp && lb ?== rb
+  CallExpression {function = lf, arguments = la} ?== CallExpression {function = rf, arguments = ra} =
+    lf ?== rf && la ?== ra
+  IndexExpression {left = ll, index = li} ?== IndexExpression {left = rl, index = ri} =
+    ll ?== rl && li ?== ri
+  IfExpression {condition = lc, consequence = lcons, alternative = lalt}
+    ?== IfExpression {condition = rc, consequence = rcons, alternative = ralt} =
+      lc ?== rc && lcons ?== rcons && lalt ?== ralt
+  _ ?== _ = False
+
+instance AstEq FieldDecl where
+  FieldDecl _ n1 t1 ?== FieldDecl _ n2 t2 = n1 == n2 && t1 == t2
+
+instance AstEq Param where
+  Param _ n1 t1 ?== Param _ n2 t2 = n1 == n2 && t1 == t2
+
+instance AstEq Statement where
+  Program {statements = l} ?== Program {statements = r} = l ?== r
+  LetStatement {name = ln, value = lv} ?== LetStatement {name = rn, value = rv} =
+    ln ?== rn && lv ?== rv
+  ReturnStatement {result = l} ?== ReturnStatement {result = r} = l ?== r
+  ExpressionStatement {expr = l} ?== ExpressionStatement {expr = r} = l ?== r
+  BlockStatement {statements = l} ?== BlockStatement {statements = r} = l ?== r
+  StructDecl {structName = ln, fields = lf} ?== StructDecl {structName = rn, fields = rf} =
+    ln == rn && lf ?== rf
+  _ ?== _ = False
+
+-- lists for free
+instance (AstEq a) => AstEq [a] where
+  [] ?== [] = True
+  (x : xs) ?== (y : ys) = x ?== y && xs ?== ys
+  _ ?== _ = False
+
+-- maybe for free
+instance (AstEq a) => AstEq (Maybe a) where
+  Nothing ?== Nothing = True
+  Just l ?== Just r = l ?== r
+  _ ?== _ = False

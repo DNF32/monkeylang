@@ -184,7 +184,7 @@ testIndex = describe "Test indexing" $ do
     evalHelper "[1, 2, 3][true];"
       `shouldBe` ErrorObj
         InvalidIndexType
-          { expected = "Integer"
-          , got = "Boolean"
-          , pos = Just Position { _line = 1, _column = 10 }
+          { expected = "Integer",
+            got = "Boolean",
+            pos = Just Position {_line = 1, _column = 10}
           }

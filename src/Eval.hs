@@ -1,6 +1,6 @@
 module Eval where
 
-import Ast (Expression (..), Statement (..), exprToken, expressionToString)
+import Ast (Expression (..), Param (..), Statement (..), expressionToString)
 import Control.Lens
 import Control.Monad.State
 import Data.List (intercalate)
@@ -45,7 +45,7 @@ data Object
   | BoolObj Bool
   | FloatObj Float
   | StringObj String
-  | FunctionObj [Expression] [Statement] Enviroment
+  | FunctionObj [Param] [Statement] Enviroment
   | NullObj
   | ArrayObj [Object]
   | ReturnObj Object
@@ -172,7 +172,7 @@ evalBlockStatement (s1 : ss) = do
     _ -> return voidObj
 
 evalLetStatement :: Statement -> Eval Object
-evalLetStatement (LetStatement _ (IdentifierLit _ name _) value) = do
+evalLetStatement (LetStatement _ (IdentifierLit _ name) value _) = do
   obj <- unwrapReturnObj <$> evalExpression value
   case obj of
     ErrorObj _ -> return obj
@@ -205,7 +205,7 @@ evalExpression (FloatLit _ floatValue) = return (FloatObj floatValue)
 evalExpression (StringLit _ stringValue) = return (StringObj stringValue)
 evalExpression (BooleanLit _ value) =
   return (if value then trueObj else falseObj)
-evalExpression (IdentifierLit (Token _ pos) name _) = do
+evalExpression (IdentifierLit (Token _ pos) name) = do
   maybeObj <- getObject name
   case maybeObj of
     Just obj -> return obj
@@ -255,13 +255,9 @@ evalExpression (InfixExpression (Token _ pos) left operator right) = do
       ErrorObj _ -> withPos pos obj
       _ -> obj
 evalExpression (FunctionLit (Token _ pos) parameters _ body) = do
-  if all isIdentifierLit parameters
-    then do
-      env <- get
-      return (FunctionObj parameters body env)
-    else
-      return (ErrorObj (InvalidFunctionParameter (Just pos)))
-evalExpression (CallExpression (Token _ pos) (IdentifierLit _ funcName _) args) = do
+  env <- get
+  return (FunctionObj parameters body env)
+evalExpression (CallExpression (Token _ pos) (IdentifierLit _ funcName) args) = do
   maybeFunc <- getObject funcName
   case maybeFunc of
     Just (FunctionObj params body env) -> do
@@ -320,9 +316,17 @@ evalExpression (IndexExpression (Token _ pos) left indexExpr) = do
                 }
             )
         )
-evalExpression expr = return (ErrorObj (TypeError ("Unhandled expression: " ++ show expr) (Just (expr ^. exprToken . tokenPosition))))
+evalExpression expr =
+  let tok = (token :: Expression -> Token) expr
+   in return
+        ( ErrorObj
+            ( TypeError
+                ("Unhandled expression: " ++ show expr)
+                (Just (_tokenPosition tok))
+            )
+        )
 
-functionEval :: [Expression] -> [Statement] -> Enviroment -> [Expression] -> Eval Object
+functionEval :: [Param] -> [Statement] -> Enviroment -> [Expression] -> Eval Object
 functionEval params body env args
   | length params /= length args = return (ErrorObj (InvalidFunctionCall Nothing))
   | otherwise = do
@@ -336,8 +340,9 @@ functionEval params body env args
           put oldEnv
           return result
 
-extendedEnv :: Enviroment -> [Expression] -> [Object] -> Enviroment
-extendedEnv env params unwrapedArgs = Map.union (Map.fromList [(name, obj) | (IdentifierLit _ name _, obj) <- zip params unwrapedArgs]) env
+extendedEnv :: Enviroment -> [Param] -> [Object] -> Enviroment
+extendedEnv env params evaluatedArgs =
+  Map.union (Map.fromList [(name, obj) | (Param _ name _, obj) <- zip params evaluatedArgs]) env
 
 isError :: Object -> Bool
 isError (ErrorObj _) = True
@@ -346,10 +351,6 @@ isError _ = False
 unwrapReturnObj :: Object -> Object
 unwrapReturnObj (ReturnObj obj) = obj
 unwrapReturnObj obj = obj
-
-isIdentifierLit :: Expression -> Bool
-isIdentifierLit (IdentifierLit _ _ _) = True
-isIdentifierLit _ = False
 
 evalSum :: Object -> Object -> Object
 evalSum left right = case (left, right) of

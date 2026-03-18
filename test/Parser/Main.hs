@@ -3,19 +3,17 @@
 
 module Main where
 
-import Ast (Expression (..), Statement (..), expressionToString, prettyPrintStatement, statementToString, (?==))
+import Ast (Expression (..), FieldDecl (..), Param (..), Statement (..), expressionToString, prettyPrintStatement, statementToString, (?==))
 import Control.Monad
 import Debug.Trace
 import Parser
 import Test.Hspec
 import Token (LexerState (..), Position (..), Token (..), TokenType (..), runLexer, tokenizer, tokenizerAll)
 import TypeChecker
+import Types
 
 initialState :: String -> LexerState
 initialState input = LexerState {getInput = input, currentPosition = Position {_line = 1, _column = 1}}
-
-identityType :: Type
-identityType = IntT
 
 main :: IO ()
 main = hspec $ do
@@ -23,6 +21,7 @@ main = hspec $ do
   specOpPrecedence
   literalTest
   callExpr
+  structDecl
 
 specOpPrecedence :: Spec
 specOpPrecedence = do
@@ -81,9 +80,8 @@ spec = do
             expectationFailure ("Parser failed: " ++ show err)
           Right (Program stmts, _) ->
             case head stmts of
-              LetStatement _ (IdentifierLit _ "x" (Just IntT)) _ -> return ()
+              LetStatement _ (IdentifierLit _ "x") _ _ -> return ()
               stmt -> expectationFailure ("Expected LetStatement with type hint, got: " ++ statementToString stmt)
-
     describe "return statement" $ do
       let testCases =
             [ ("return \"that is the end\";", isStringLit "that is the end"),
@@ -101,11 +99,11 @@ spec = do
               testReturnStatementSpec exprPredicate (head stmts)
     describe "prefix expression" $ do
       let testCases =
-            [ ("!that", isBangWithExpr (IdentifierLit identityToken "that" Nothing)),
+            [ ("!that", isBangWithExpr (IdentifierLit identityToken "that")),
               ("-10", isMinusWithExpr (IntLit identityToken 10)),
               ("!true", isBangWithExpr (BooleanLit identityToken True)),
               ("!false", isBangWithExpr (BooleanLit identityToken False)),
-              ("!False", isBangWithExpr (IdentifierLit identityToken "False" Nothing))
+              ("!False", isBangWithExpr (IdentifierLit identityToken "False"))
             ]
       forM_ testCases $ \(input, exprPredicate) -> do
         describe ("parsing: " ++ input) $ do
@@ -168,7 +166,7 @@ literalTest = do
         it "should parse index expression correctly" $
           case head stmts of
             ExpressionStatement _ expr@(IndexExpression _ left indexExpr) -> do
-              expr `shouldSatisfy` (?== IndexExpression identityToken (IdentifierLit identityToken "myarray" Nothing) (InfixExpression identityToken (IntLit identityToken 1) Plus (IntLit identityToken 1)))
+              expr `shouldSatisfy` (?== IndexExpression identityToken (IdentifierLit identityToken "myarray") (InfixExpression identityToken (IntLit identityToken 1) Plus (IntLit identityToken 1)))
             _ -> expectationFailure "Expected IndexExpression"
 
   describe "function literal" $ do
@@ -184,7 +182,7 @@ literalTest = do
               parameters
                 `shouldSatisfy` ( \ps ->
                                     length ps == 2
-                                      && and (zipWith (?==) ps [IdentifierLit identityToken "x" Nothing, IdentifierLit identityToken "y" Nothing])
+                                      && and (zipWith (?==) ps [Param identityToken "x" Nothing, Param identityToken "y" Nothing])
                                 )
               length body `shouldBe` 1
               case head body of
@@ -205,7 +203,7 @@ literalTest = do
               parameters
                 `shouldSatisfy` ( \ps ->
                                     length ps == 2
-                                      && and (zipWith (?==) ps [IdentifierLit identityToken "x" (Just IntT), IdentifierLit identityToken "y" Nothing])
+                                      && and (zipWith (?==) ps [Param identityToken "x" (Just IntT), Param identityToken "y" Nothing])
                                 )
               length body `shouldBe` 1
               case head body of
@@ -240,12 +238,12 @@ callExpr = do
           case head stmts of
             ExpressionStatement _ (CallExpression _ function args) ->
               case function of
-                IdentifierLit _ name _ -> do
+                IdentifierLit _ name -> do
                   name `shouldBe` "call"
                   args
                     `shouldSatisfy` ( \ps ->
                                         length ps == 2
-                                          && and (zipWith (?==) ps [IdentifierLit identityToken "x" Nothing, IdentifierLit identityToken "y" Nothing])
+                                          && and (zipWith (?==) ps [IdentifierLit identityToken "x", IdentifierLit identityToken "y"])
                                     )
                 _ -> expectationFailure "Expected IdentifierLit"
             _ -> expectationFailure "Expected CallExpression"
@@ -264,10 +262,33 @@ callExpr = do
                   args
                     `shouldSatisfy` ( \ps ->
                                         length ps == 2
-                                          && and (zipWith (?==) ps [IdentifierLit identityToken "x" (Just IntT), IdentifierLit identityToken "y" (Just IntT)])
+                                          && and (zipWith (?==) ps [IdentifierLit identityToken "x", IdentifierLit identityToken "y"])
                                     )
                 _ -> expectationFailure "Expected FunctionLit"
             _ -> expectationFailure "Expected CallExpression"
+
+structDecl :: Spec
+structDecl = do
+  describe "parsing struct declaration" $ do
+    let state = initialState "Struct Foo { x: Int; y: Point }"
+    case runAstParser parseProgram state of
+      Left err ->
+        it "should parse successfully" $
+          expectationFailure ("Parser failed: " ++ show err)
+      Right (Program stmts, _) ->
+        it "should parse struct declaration correctly" $
+          case head stmts of
+            StructDecl _ name fields -> do
+              name `shouldBe` "Foo"
+              length fields `shouldBe` 2
+              case fields of
+                [FieldDecl _ fname1 ftype1, FieldDecl _ fname2 ftype2] -> do
+                  fname1 `shouldBe` "x"
+                  ftype1 `shouldBe` IntT
+                  fname2 `shouldBe` "y"
+                  ftype2 `shouldBe` UnresolvedT "Point"
+                _ -> expectationFailure "Expected 2 fields"
+            _ -> expectationFailure "Expected StructDecl"
 
 testLetStatementSpec :: String -> (Expression -> Bool) -> Statement -> Spec
 testLetStatementSpec expectedId exprPredicate parsedStatement = do
@@ -346,7 +367,7 @@ isFloatLitWith expected (FloatLit _ val) = val == expected
 isFloatLitWith _ _ = False
 
 isIdentifier :: String -> Expression -> Bool
-isIdentifier expected (IdentifierLit _ name _) = name == expected
+isIdentifier expected (IdentifierLit _ name) = name == expected
 isIdentifier _ _ = False
 
 isStringLit :: String -> Expression -> Bool
