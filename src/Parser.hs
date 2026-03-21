@@ -2,7 +2,7 @@
 
 module Parser where
 
-import Ast (Expression (..), FieldDecl (..), Param (..), Precedence (..), Statement (..), infixToPrecedence)
+import Ast (Expression (..), FieldDecl (..), FieldInitialization (..), Param (..), Precedence (..), Statement (..), infixToPrecedence)
 import Control.Applicative (Alternative (..))
 import Control.Lens
 import Data.Char (GeneralCategory (LowercaseLetter))
@@ -190,10 +190,11 @@ parseCallExpression expr = case expr of
   IdentifierLit tok _ -> CallExpression tok expr <$> parseArgs
   FunctionLit tok _ _ _ -> CallExpression tok expr <$> parseArgs
   CallExpression tok _ _ -> CallExpression tok expr <$> parseArgs
+  FieldAccess tok _ _ -> CallExpression tok expr <$> parseArgs
   _ ->
     let tok = (token :: Expression -> Token) expr
      in newParserWithError
-          ("Tried to create a Call expression without IdentifierLit or FunctionLit, found: " ++ show (_tokenType tok))
+          ("Tried to create a Call expression without IdentifierLit or FunctionLit, found: " ++ show (expr))
           (_tokenPosition tok)
 
 parseParameters :: AstParser [Param]
@@ -326,9 +327,20 @@ continueInfix precedence leftExpr = do
         GreaterThan -> parserGreaterThanInfixExpression leftExpr
         LBracket -> parseIndexExpression leftExpr
         LParen -> parseCallExpression leftExpr
+        Dot -> parseFieldAccessExpression leftExpr
+        LBrace -> parseStructInit leftExpr
         _ -> newParserWithError ("Unexpected token in infix position: " ++ show tt) pos
       continueInfix precedence newExpr
     _ -> return leftExpr
+
+parseFieldAccessExpression :: Expression -> AstParser Expression
+parseFieldAccessExpression leftExpr = do
+  dotTok <- isToken Dot
+  identLit <- parseIdentifierExpression
+  let fieldName = case identLit of
+        IdentifierLit _ name -> name
+        _ -> error "parseIdentifierExpression returned non-identifier" -- should never happen
+  return (FieldAccess dotTok leftExpr fieldName)
 
 parseLetStatement :: AstParser Statement
 parseLetStatement = do
@@ -397,6 +409,7 @@ parseStructDecl = do
   _ <- isToken LBrace
   fields <- oneOrMore parseFieldDeclaration
   _ <- isToken RBrace
+  _ <- optional (isToken Semicolon)
   case nameExpr of
     IdentifierLit _ n -> return (StructDecl tok n fields)
     _ -> newParserWithError "Expected struct name" (_tokenPosition tok)
@@ -409,6 +422,25 @@ parseStructDecl = do
       case nameExpr of
         IdentifierLit fieldTok n -> return (FieldDecl fieldTok n typeHint)
         _ -> newParserWithError "Expected field name" pos
+
+parseStructInit :: Expression -> AstParser Expression
+parseStructInit leftExpr = do
+  tok <- isToken LBrace
+  inits <- oneOrMore parseFieldInit
+  _ <- isToken RBrace
+  case leftExpr of
+    IdentifierLit _ name -> return (StructInitialization tok name inits)
+    _ -> newParserWithError "Expected struct name before {" (getPos leftExpr)
+  where
+    parseFieldInit :: AstParser FieldInitialization
+    parseFieldInit = do
+      varName <- parseIdentifierExpression
+      _ <- isToken Colon
+      expr <- parseExpressionRbp LOWEST
+      _ <- optional (isToken Semicolon)
+      case varName of
+        IdentifierLit tok name -> return (FieldInit tok name expr)
+        _ -> newParserWithError "Expected field name" (getPos varName)
 
 parseExpressionStatement :: Token -> AstParser Statement
 parseExpressionStatement token = ExpressionStatement <$> pure token <*> parseExpressionRbp LOWEST <* optional (isToken Semicolon)

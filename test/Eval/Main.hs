@@ -1,4 +1,5 @@
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
 
 module Main where
@@ -6,6 +7,7 @@ module Main where
 import Ast (Expression (..), Statement (..), expressionToString, prettyPrintStatement, statementToString, (?==))
 import Control.Monad
 import Control.Monad.State.Lazy
+import Data.Map qualified as Map
 import Debug.Trace
 import Eval
 import Parser
@@ -26,6 +28,7 @@ main = hspec $ do
   testClosures
   testFunctionApplication
   testIndex
+  testStruct
 
 evalHelper :: String -> Object
 evalHelper program =
@@ -119,8 +122,8 @@ testIfElse = do
   describe "nil cases" $ do
     let testCases :: [(String, Object)]
         testCases =
-          [ ("if (1 > 2) { 10 }", NullObj),
-            ("if (false) { 10 }", NullObj)
+          [ ("if (1 > 2) { 10 }", VoidObj),
+            ("if (false) { 10 }", VoidObj)
           ]
 
     forM_ testCases $ \(input, expectedValue) -> do
@@ -188,3 +191,95 @@ testIndex = describe "Test indexing" $ do
             got = "Boolean",
             pos = Just Position {_line = 1, _column = 10}
           }
+
+testStruct :: Spec
+testStruct = describe "Test struct initialization and field access" $ do
+  -- Basic struct initialization
+  it "creates a simple struct with integer fields" $
+    evalHelper "Point { x: 10; y: 20 };" `shouldBe` StructObj "Point" (Map.fromList [("x", IntObj 10), ("y", IntObj 20)])
+
+  it "creates a struct with mixed field types" $
+    evalHelper "Person { name: \"Alice\"; age: 30; active: true };"
+      `shouldBe` StructObj "Person" (Map.fromList [("name", StringObj "Alice"), ("age", IntObj 30), ("active", BoolObj True)])
+
+  -- Struct in let binding
+  it "binds struct to variable" $ do
+    let result = evalHelper "let p = Point { x: 10; y: 20 }; p;"
+    result `shouldBe` StructObj "Point" (Map.fromList [("x", IntObj 10), ("y", IntObj 20)])
+
+  -- Field access
+  it "accesses struct field" $
+    evalHelper "let p = Point { x: 10; y: 20 }; p.x;" `shouldBe` IntObj 10
+
+  it "accesses different struct fields" $
+    evalHelper "let p = Point { x: 10; y: 20 }; p.y;" `shouldBe` IntObj 20
+
+  it "accesses string field from struct" $
+    evalHelper "let person = Person { name: \"Bob\"; age: 25 }; person.name;"
+      `shouldBe` StringObj "Bob"
+
+  -- Struct with expressions as values
+  it "evaluates expressions in field values" $
+    evalHelper "Point { x: 5 + 5; y: 10 * 2 };"
+      `shouldBe` StructObj "Point" (Map.fromList [("x", IntObj 10), ("y", IntObj 20)])
+
+  it "calls function in field value" $
+    evalHelper "let add = fn(a, b) { return a + b }; Point { x: add(5, 5); y: 20 };"
+      `shouldBe` StructObj "Point" (Map.fromList [("x", IntObj 10), ("y", IntObj 20)])
+
+  -- Nested structs
+  it "creates nested struct" $ do
+    let inner1 = StructObj "Point" (Map.fromList [("x", IntObj 0), ("y", IntObj 0)])
+    let inner2 = StructObj "Point" (Map.fromList [("x", IntObj 10), ("y", IntObj 10)])
+    evalHelper "Line { start: Point { x: 0; y: 0 }; end: Point { x: 10; y: 10 } };"
+      `shouldBe` StructObj "Line" (Map.fromList [("start", inner1), ("end", inner2)])
+
+  it "accesses nested struct field" $
+    evalHelper "let line = Line { start: Point { x: 0; y: 0 }; end: Point { x: 10; y: 10 } }; line.start.x;"
+      `shouldBe` IntObj 0
+
+  it "accesses deeply nested field" $
+    evalHelper "let line = Line { start: Point { x: 5; y: 10 }; end: Point { x: 15; y: 20 } }; line.end.y;"
+      `shouldBe` IntObj 20
+
+  -- Struct declarations (should be ignored in eval mode)
+  it "ignores struct declaration" $
+    evalHelper "Struct Point { x: Int; y: Int }; return 42;" `shouldBe` IntObj 42
+
+  it "creates struct even without declaration" $
+    evalHelper "AnyStructName { field1: 1; field2: 2 };"
+      `shouldBe` StructObj "AnyStructName" (Map.fromList [("field1", IntObj 1), ("field2", IntObj 2)])
+
+  -- Error cases
+  it "returns error on field access of non-struct" $
+    evalHelper "let x = 10; x.foo;"
+      `shouldSatisfy` ( \case
+                          ErrorObj (InvalidFieldAcess _ _ _) -> True
+                          _ -> False
+                      )
+
+  it "returns error on accessing non-existent field" $
+    evalHelper "let p = Point { x: 10; y: 20 }; p.z;"
+      `shouldSatisfy` \case
+        ErrorObj (InvalidFieldAcess _ _ _) -> True
+        _ -> False
+
+  -- Struct in array
+  it "stores struct in array" $ do
+    let p1 = StructObj "Point" (Map.fromList [("x", IntObj 1), ("y", IntObj 2)])
+    let p2 = StructObj "Point" (Map.fromList [("x", IntObj 3), ("y", IntObj 4)])
+    evalHelper "[Point { x: 1; y: 2 }, Point { x: 3; y: 4 }];"
+      `shouldBe` ArrayObj [p1, p2]
+
+  it "accesses struct field from array element" $
+    evalHelper "let points = [Point { x: 1; y: 2 }, Point { x: 3; y: 4 }]; points[0].x;"
+      `shouldBe` IntObj 1
+
+  -- Struct returned from function
+  it "returns struct from function" $
+    evalHelper "let makePoint = fn(x, y) { return Point { x: x; y: y } }; makePoint(5, 10);"
+      `shouldBe` StructObj "Point" (Map.fromList [("x", IntObj 5), ("y", IntObj 10)])
+
+  it "accesses field of struct returned from function" $
+    evalHelper "let makePoint = fn(x, y) { return Point { x: x; y: y } }; makePoint(7, 14).y;"
+      `shouldBe` IntObj 14

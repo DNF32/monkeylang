@@ -3,7 +3,7 @@
 
 module Main where
 
-import Ast (Expression (..), FieldDecl (..), Param (..), Statement (..), expressionToString, prettyPrintStatement, statementToString, (?==))
+import Ast (Expression (..), FieldDecl (..), FieldInitialization (..), Param (..), Statement (..), expressionToString, prettyPrintStatement, statementToString, (?==))
 import Control.Monad
 import Debug.Trace
 import Parser
@@ -22,6 +22,7 @@ main = hspec $ do
   literalTest
   callExpr
   structDecl
+  structInit
 
 specOpPrecedence :: Spec
 specOpPrecedence = do
@@ -289,6 +290,208 @@ structDecl = do
                   ftype2 `shouldBe` UnresolvedT "Point"
                 _ -> expectationFailure "Expected 2 fields"
             _ -> expectationFailure "Expected StructDecl"
+
+structInit :: Spec
+structInit = do
+  describe "parsing struct initialization" $ do
+    -- Basic struct initialization with integers
+    it "parses simple struct with integer fields" $ do
+      let state = initialState "Point { x: 10; y: 20 }"
+      case runAstParser parseProgram state of
+        Left err -> expectationFailure ("Parser failed: " ++ show err)
+        Right (Program stmts, _) ->
+          case head stmts of
+            ExpressionStatement _ (StructInitialization _ structName inits) -> do
+              structName `shouldBe` "Point"
+              length inits `shouldBe` 2
+              case inits of
+                [FieldInit _ fname1 val1, FieldInit _ fname2 val2] -> do
+                  fname1 `shouldBe` "x"
+                  case val1 of
+                    IntLit _ v -> v `shouldBe` 10
+                    _ -> expectationFailure "Expected IntLit for x"
+                  fname2 `shouldBe` "y"
+                  case val2 of
+                    IntLit _ v -> v `shouldBe` 20
+                    _ -> expectationFailure "Expected IntLit for y"
+                _ -> expectationFailure "Expected 2 field initializations"
+            _ -> expectationFailure "Expected StructInitialization"
+
+    -- Struct initialization with trailing semicolon
+    it "parses struct with trailing semicolon" $ do
+      let state = initialState "Point { x: 10; y: 20; }"
+      case runAstParser parseProgram state of
+        Left err -> expectationFailure ("Parser failed: " ++ show err)
+        Right (Program stmts, _) ->
+          case head stmts of
+            ExpressionStatement _ (StructInitialization _ structName inits) -> do
+              structName `shouldBe` "Point"
+              length inits `shouldBe` 2
+            _ -> expectationFailure "Expected StructInitialization"
+
+    -- Struct initialization with expressions as values
+    it "parses struct with expression values" $ do
+      let state = initialState "Point { x: 1 + 2; y: foo() }"
+      case runAstParser parseProgram state of
+        Left err -> expectationFailure ("Parser failed: " ++ show err)
+        Right (Program stmts, _) ->
+          case head stmts of
+            ExpressionStatement _ (StructInitialization _ structName inits) -> do
+              structName `shouldBe` "Point"
+              length inits `shouldBe` 2
+              case inits of
+                [FieldInit _ fname1 val1, FieldInit _ fname2 val2] -> do
+                  fname1 `shouldBe` "x"
+                  case val1 of
+                    InfixExpression _ _ Plus _ -> return ()
+                    _ -> expectationFailure "Expected infix expression for x"
+                  fname2 `shouldBe` "y"
+                  case val2 of
+                    CallExpression _ _ _ -> return ()
+                    _ -> expectationFailure "Expected call expression for y"
+                _ -> expectationFailure "Expected 2 field initializations"
+            _ -> expectationFailure "Expected StructInitialization"
+
+    -- Struct initialization with mixed types
+    it "parses struct with mixed field types" $ do
+      let state = initialState "Person { name: \"Alice\"; age: 30; active: true }"
+      case runAstParser parseProgram state of
+        Left err -> expectationFailure ("Parser failed: " ++ show err)
+        Right (Program stmts, _) ->
+          case head stmts of
+            ExpressionStatement _ (StructInitialization _ structName inits) -> do
+              structName `shouldBe` "Person"
+              length inits `shouldBe` 3
+              case inits of
+                [FieldInit _ fname1 val1, FieldInit _ fname2 val2, FieldInit _ fname3 val3] -> do
+                  fname1 `shouldBe` "name"
+                  case val1 of
+                    StringLit _ s -> s `shouldBe` "Alice"
+                    _ -> expectationFailure "Expected StringLit for name"
+                  fname2 `shouldBe` "age"
+                  case val2 of
+                    IntLit _ v -> v `shouldBe` 30
+                    _ -> expectationFailure "Expected IntLit for age"
+                  fname3 `shouldBe` "active"
+                  case val3 of
+                    BooleanLit _ b -> b `shouldBe` True
+                    _ -> expectationFailure "Expected BooleanLit for active"
+                _ -> expectationFailure "Expected 3 field initializations"
+            _ -> expectationFailure "Expected StructInitialization"
+
+    -- Struct initialization in let statement
+    it "parses struct initialization in let statement" $ do
+      let state = initialState "let p = Point { x: 10; y: 20 };"
+      case runAstParser parseProgram state of
+        Left err -> expectationFailure ("Parser failed: " ++ show err)
+        Right (Program stmts, _) ->
+          case head stmts of
+            LetStatement _ (IdentifierLit _ name) (StructInitialization _ structName inits) _ -> do
+              name `shouldBe` "p"
+              structName `shouldBe` "Point"
+              length inits `shouldBe` 2
+            _ -> expectationFailure "Expected LetStatement with StructInitialization"
+
+    -- Nested struct initialization
+    it "parses nested struct initialization" $ do
+      let state = initialState "Line { start: Point { x: 0; y: 0 }; end: Point { x: 10; y: 10 } }"
+      case runAstParser parseProgram state of
+        Left err -> expectationFailure ("Parser failed: " ++ show err)
+        Right (Program stmts, _) ->
+          case head stmts of
+            ExpressionStatement _ (StructInitialization _ structName inits) -> do
+              structName `shouldBe` "Line"
+              length inits `shouldBe` 2
+              case inits of
+                [FieldInit _ fname1 val1, FieldInit _ fname2 val2] -> do
+                  fname1 `shouldBe` "start"
+                  case val1 of
+                    StructInitialization _ innerName1 _ -> innerName1 `shouldBe` "Point"
+                    _ -> expectationFailure "Expected nested StructInitialization for start"
+                  fname2 `shouldBe` "end"
+                  case val2 of
+                    StructInitialization _ innerName2 _ -> innerName2 `shouldBe` "Point"
+                    _ -> expectationFailure "Expected nested StructInitialization for end"
+                _ -> expectationFailure "Expected 2 field initializations"
+            _ -> expectationFailure "Expected StructInitialization"
+
+fieldAccess :: Spec
+fieldAccess = do
+  describe "parsing field access expressions" $ do
+    -- Simple field access: foo.bar
+    it "parses simple field access" $ do
+      let state = initialState "foo.bar"
+      case runAstParser parseProgram state of
+        Left err -> expectationFailure ("Parser failed: " ++ show err)
+        Right (Program stmts, _) ->
+          case head stmts of
+            ExpressionStatement _ (FieldAccess _ object fieldName) -> do
+              fieldName `shouldBe` "bar"
+              case object of
+                IdentifierLit _ "foo" -> pure ()
+                _ -> expectationFailure ("Expected IdentifierLit on object, got: " ++ show object)
+            _ -> expectationFailure ("Expected FieldAccess found: " ++ show (head stmts))
+
+    -- Chained field access: foo.bar.baz
+    it "parses chained field access" $ do
+      let state = initialState "foo.bar.baz"
+      case runAstParser parseProgram state of
+        Left err -> expectationFailure ("Parser failed: " ++ show err)
+        Right (Program stmts, _) ->
+          case head stmts of
+            ExpressionStatement _ (FieldAccess _ inner "baz") ->
+              case inner of
+                FieldAccess _ obj "bar" -> case obj of
+                  IdentifierLit _ "foo" -> pure ()
+                  _ -> expectationFailure ("Expected IdentifierLit 'foo', got: " ++ show obj)
+                _ -> expectationFailure ("Expected inner FieldAccess for 'bar', got: " ++ show inner)
+            _ -> expectationFailure ("Expected FieldAccess found: " ++ show (head stmts))
+
+    -- Field access with call: foo.bar()
+    it "parses field access with function call" $ do
+      let state = initialState "foo.bar()"
+      case runAstParser parseProgram state of
+        Left err -> expectationFailure ("Parser failed: " ++ show err)
+        Right (Program stmts, _) ->
+          case head stmts of
+            ExpressionStatement _ (CallExpression _ (FieldAccess _ obj "bar") []) ->
+              case obj of
+                IdentifierLit _ "foo" -> pure ()
+                _ -> expectationFailure ("Expected IdentifierLit 'foo', got: " ++ show obj)
+            _ -> expectationFailure ("Expected CallExpression(FieldAccess), got: " ++ show (head stmts))
+
+    -- Call then field: foo().bar
+    it "parses function call followed by field access" $ do
+      let state = initialState "foo().bar"
+      case runAstParser parseProgram state of
+        Left err -> expectationFailure ("Parser failed: " ++ show err)
+        Right (Program stmts, _) ->
+          case head stmts of
+            ExpressionStatement _ (FieldAccess _ (CallExpression _ (IdentifierLit _ "foo") []) "bar") ->
+              pure ()
+            _ -> expectationFailure ("Expected FieldAccess(CallExpression), got: " ++ show (head stmts))
+
+    -- Field access with index: foo.bar[0]
+    it "parses field access with index" $ do
+      let state = initialState "foo.bar[0]"
+      case runAstParser parseProgram state of
+        Left err -> expectationFailure ("Parser failed: " ++ show err)
+        Right (Program stmts, _) ->
+          case head stmts of
+            ExpressionStatement _ (IndexExpression _ (FieldAccess _ (IdentifierLit _ "foo") "bar") (IntLit _ 0)) ->
+              pure ()
+            _ -> expectationFailure ("Expected IndexExpression(FieldAccess), got: " ++ show (head stmts))
+
+    -- Index then field: foo[0].bar
+    it "parses index followed by field access" $ do
+      let state = initialState "foo[0].bar"
+      case runAstParser parseProgram state of
+        Left err -> expectationFailure ("Parser failed: " ++ show err)
+        Right (Program stmts, _) ->
+          case head stmts of
+            ExpressionStatement _ (FieldAccess _ (IndexExpression _ (IdentifierLit _ "foo") (IntLit _ 0)) "bar") ->
+              pure ()
+            _ -> expectationFailure ("Expected FieldAccess(IndexExpression), got: " ++ show (head stmts))
 
 testLetStatementSpec :: String -> (Expression -> Bool) -> Statement -> Spec
 testLetStatementSpec expectedId exprPredicate parsedStatement = do

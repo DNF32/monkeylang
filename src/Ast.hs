@@ -6,6 +6,7 @@
 module Ast
   ( Expression (..),
     Statement (..),
+    FieldInitialization (..),
     TExpression (..),
     TStatement (..),
     Param (..),
@@ -24,7 +25,7 @@ module Ast
 where
 
 import Data.List (intercalate)
-import Token (Token (..), TokenType (..))
+import Token (HasToken (..), Position (..), Token (..), TokenType (..))
 import Types
 
 type Operator = TokenType
@@ -43,6 +44,37 @@ data Expression
   | CallExpression {token :: Token, function :: Expression, arguments :: [Expression]}
   | IndexExpression {token :: Token, left :: Expression, index :: Expression}
   | IfExpression {token :: Token, condition :: Expression, consequence :: [Statement], alternative :: Maybe [Statement]}
+  | FieldAccess {token :: Token, object :: Expression, fieldName :: String}
+  | StructInitialization {token :: Token, structName :: String, fieldInits :: [FieldInitialization]}
+  deriving (Eq, Show)
+
+exprToken :: Expression -> Token
+exprToken expr =
+  case expr of
+    IntLit t _ -> t
+    FloatLit t _ -> t
+    StringLit t _ -> t
+    IdentifierLit t _ -> t
+    ArrayLit t _ -> t
+    BooleanLit t _ -> t
+    NullLit t -> t
+    PrefixExpression t _ _ -> t
+    InfixExpression t _ _ _ -> t
+    FunctionLit t _ _ _ -> t
+    CallExpression t _ _ -> t
+    IndexExpression t _ _ -> t
+    IfExpression t _ _ _ -> t
+    FieldAccess t _ _ -> t
+    StructInitialization t _ _ -> t
+
+instance HasToken Expression where
+  getToken = exprToken
+
+data FieldInitialization = FieldInit
+  { initToken :: Token,
+    initFieldName :: String,
+    initValue :: Expression
+  }
   deriving (Eq, Show)
 
 data Param = Param
@@ -54,8 +86,8 @@ data Param = Param
 
 data FieldDecl = FieldDecl
   { fieldToken :: Token,
-    fieldName  :: String,
-    fieldType  :: Type
+    fieldName :: String,
+    fieldType :: Type
   }
   deriving (Eq, Show)
 
@@ -84,6 +116,8 @@ infixToPrecedence token = case token of
   Asterisk -> PRODUCT
   LParen -> CALL
   LBracket -> INDEX
+  Dot -> CALL
+  LBrace -> CALL -- struct initialization: Point { x: 10 }
   otherwise -> LOWEST
 
 statementToString :: Statement -> String

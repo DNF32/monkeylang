@@ -11,6 +11,15 @@ import Data.Char (isAlpha, isAlphaNum, isDigit)
 import Data.Traversable ()
 import SimpleParser
 
+class HasToken a where
+  getToken :: a -> Token
+
+getPos :: (HasToken a) => a -> Position
+getPos = _tokenPosition . getToken
+
+instance HasToken Token where
+  getToken = id
+
 -- Core types
 data TokenType
   = Illegal
@@ -29,6 +38,7 @@ data TokenType
   | NotEqual -- Remove String: always "!="
   | LessThan -- Remove Char: always '<'
   | GreaterThan -- Remove Char: always '>'
+  | Dot
   | Comma -- Remove Char: always ','
   | Semicolon -- Remove Char: always ';'
   | Colon -- Remove Char: always ':'
@@ -259,7 +269,7 @@ identifiderAndKeywordsLexer = lookupIdent <$> ident
 -- Symbol Lexers
 
 specialSymbols :: [(Char, TokenType)]
-specialSymbols = [('(', LParen), (')', RParen), ('[', LBracket), (']', RBracket), ('}', RBrace), ('{', LBrace), (';', Semicolon), (':', Colon), (',', Comma), ('-', Minus), ('+', Plus), ('*', Asterisk), ('<', LessThan), ('>', GreaterThan), ('/', Slash), ('|', Pipe)]
+specialSymbols = [('(', LParen), (')', RParen), ('[', LBracket), (']', RBracket), ('}', RBrace), ('{', LBrace), (';', Semicolon), (':', Colon), (',', Comma), ('-', Minus), ('+', Plus), ('*', Asterisk), ('<', LessThan), ('>', GreaterThan), ('/', Slash), ('|', Pipe), ('.', Dot)]
 
 symbolMap :: [Char]
 symbolMap = map fst specialSymbols

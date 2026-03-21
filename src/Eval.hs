@@ -1,11 +1,12 @@
 module Eval where
 
-import Ast (Expression (..), Param (..), Statement (..), expressionToString)
+import Ast (Expression (..), FieldDecl (fieldName), FieldInitialization (..), Param (..), Statement (..), expressionToString)
 import Control.Lens
+import Control.Monad (forM)
 import Control.Monad.State
 import Data.List (intercalate)
 import Data.Map qualified as Map
-import Parser (AstParserError (..), ParserError (..), parseProgram, runAstParser)
+import Parser (AstParserError (..), ParserError (..), getCurrentPosition, parseProgram, runAstParser)
 import Token
 import TypeChecker
 
@@ -34,6 +35,7 @@ data EvalError
   | InvalidIndexTarget {got :: String, pos :: Maybe Position} -- indexing a non-array
   | InvalidIndexType {expected :: String, got :: String, pos :: Maybe Position}
   | IndexOutOfBounds {outOfBoundsIndex :: Int, arrayLength :: Int, pos :: Maybe Position}
+  | InvalidFieldAcess {objectAccessed :: Object, field :: String, pos :: Maybe Position}
   deriving (Show, Eq)
 
 withPos :: Position -> Object -> Object
@@ -51,7 +53,11 @@ data Object
   | ReturnObj Object
   | ErrorObj EvalError
   | VoidObj
+  | StructObj String (Map.Map String Object)
   deriving (Show, Eq)
+
+getValue :: Object -> String -> Maybe Object
+getValue (StructObj _ map) field = Map.lookup field map
 
 interpreter :: String -> Object
 interpreter program =
@@ -117,7 +123,10 @@ initialEnv :: Eval ()
 initialEnv = put newEnv
 
 evalProgram :: Statement -> Eval Object
-evalProgram (Program stmts) = evalProgram' stmts
+evalProgram (Program stmts) = do
+  result <- evalProgram' stmts
+  -- Unwrap ReturnObj at program level (not inside functions)
+  return (unwrapReturnObj result)
 evalProgram _ = undefined
 
 evalProgram' :: [Statement] -> Eval Object
@@ -130,6 +139,7 @@ evalProgram' [s] = case s of
     case obj of
       ReturnObj wrappedValue -> return wrappedValue
       _ -> return obj
+  StructDecl {} -> return voidObj  -- Ignore struct declarations in eval mode
   _ -> return voidObj
 evalProgram' (s1 : ss) = do
   case s1 of
@@ -143,6 +153,7 @@ evalProgram' (s1 : ss) = do
         ReturnObj wrappedValue -> return wrappedValue
         ErrorObj _ -> return obj
         _ -> evalProgram' ss
+    StructDecl {} -> evalProgram' ss  -- Ignore and continue to next statement
     _ -> return voidObj
 
 evalBlockStatement :: [Statement] -> Eval Object
@@ -194,6 +205,10 @@ evalReturnStatement (ReturnStatement _ expr) = do
     ErrorObj _ -> return obj
     _ -> return (ReturnObj obj)
 evalReturnStatement s = error $ "evalReturnStatement called with non-ReturnStatement: " ++ show s
+
+evalStructDecl :: Statement -> Eval ()
+evalStructDecl (StructDecl {}) = return ()
+evalStructDecl s = error $ "evalStructDecl called with StructDecl: " ++ show s
 
 evalExpressionStatement :: Statement -> Eval Object
 evalExpressionStatement (ExpressionStatement _ expr) = evalExpression expr
@@ -316,6 +331,18 @@ evalExpression (IndexExpression (Token _ pos) left indexExpr) = do
                 }
             )
         )
+evalExpression (StructInitialization _ structName fieldsInits) = do
+  fields <- forM fieldsInits $ \(FieldInit _ name expr) -> do
+    value <- evalExpression expr
+    return (name, value)
+  return (StructObj structName (Map.fromList fields))
+evalExpression (FieldAccess tok expr fieldName) = do
+  obj <- evalExpression expr
+  case obj of
+    StructObj {} -> case getValue obj fieldName of
+      Just value -> return value
+      Nothing -> return (ErrorObj (InvalidFieldAcess {objectAccessed = obj, field = fieldName, pos = Just (getPos tok)}))
+    _ -> return (ErrorObj (InvalidFieldAcess {objectAccessed = obj, field = fieldName, pos = Just (getPos tok)}))
 evalExpression expr =
   let tok = (token :: Expression -> Token) expr
    in return
@@ -338,7 +365,7 @@ functionEval params body env args
           put (extendedEnv env params evaluatedArgs)
           result <- evalBlockStatement body
           put oldEnv
-          return result
+          return (unwrapReturnObj result)
 
 extendedEnv :: Enviroment -> [Param] -> [Object] -> Enviroment
 extendedEnv env params evaluatedArgs =
