@@ -139,7 +139,7 @@ evalProgram' [s] = case s of
     case obj of
       ReturnObj wrappedValue -> return wrappedValue
       _ -> return obj
-  StructDecl {} -> return voidObj  -- Ignore struct declarations in eval mode
+  StructDecl {} -> return voidObj
   _ -> return voidObj
 evalProgram' (s1 : ss) = do
   case s1 of
@@ -153,7 +153,7 @@ evalProgram' (s1 : ss) = do
         ReturnObj wrappedValue -> return wrappedValue
         ErrorObj _ -> return obj
         _ -> evalProgram' ss
-    StructDecl {} -> evalProgram' ss  -- Ignore and continue to next statement
+    StructDecl {} -> evalProgram' ss
     _ -> return voidObj
 
 evalBlockStatement :: [Statement] -> Eval Object
