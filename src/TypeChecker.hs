@@ -1,6 +1,8 @@
+{-# LANGUAGE LambdaCase #-}
+
 module TypeChecker where
 
-import Ast (Expression (..), Param (..), Statement (..), TExpression (..), TParam (..), TStatement (..), getType)
+import Ast (Expression (..), FieldDecl (FieldDecl), Param (..), Statement (..), TExpression (..), TParam (..), TStatement (..), getType)
 import Control.Monad.State (MonadState (get), StateT, gets, lift, modify, put)
 import Data.Map qualified as Map
 import Data.Maybe (fromMaybe)
@@ -11,6 +13,21 @@ import Types
 -- Typechecker - literals only for now
 -- ============================================================
 --
+--
+--
+collectStructDecl :: Statement -> Check Statement
+collectStructDecl (Program stms) = do
+  let allStructDefs =
+        Map.fromList
+          [ (name, Map.fromList ([(fieldName, fieldType) | FieldDecl _ fieldName fieldType <- fields]))
+            | StructDecl _ name fields <- stms
+          ]
+  let filteredStms = filter (not . isStructDecl) stms
+  modify (\env -> env {typeDefs = allStructDefs})
+  return (Program filteredStms)
+  where
+    isStructDecl (StructDecl {}) = True
+    isStructDecl _ = False
 
 type Check a = StateT TypecheckEnv (Either TypeError) a
 

@@ -457,18 +457,29 @@ parseStatement endToken = do
         _ | tt == endToken -> pure Nothing
         _ -> fmap Just (parseExpressionStatement tok)
 
-parseProgram :: AstParser Statement
-parseProgram = Program <$> parseStatementsUntil EOF
+parseStatementInScope :: TokenType -> AstParser (Maybe Statement)
+parseStatementInScope endToken = do
+  pTok <- peekToken
+  case pTok of
+    tok@(Token tt _) -> do
+      case tt of
+        Let -> fmap Just parseLetStatement
+        Return -> fmap Just parseReturnStatement
+        _ | tt == endToken -> pure Nothing
+        _ -> fmap Just (parseExpressionStatement tok)
 
-parseStatementsUntil :: TokenType -> AstParser [Statement]
-parseStatementsUntil endToken = do
-  maybeStmt <- parseStatement endToken
+parseProgram :: AstParser Statement
+parseProgram = Program <$> parseStatementsUntil parseStatement EOF
+
+parseStatementsUntil :: (TokenType -> AstParser (Maybe Statement)) -> TokenType -> AstParser [Statement]
+parseStatementsUntil parsingFunction endToken = do
+  maybeStmt <- parsingFunction endToken
   case maybeStmt of
     Nothing -> pure []
-    Just stmt -> (stmt :) <$> parseStatementsUntil endToken
+    Just stmt -> (stmt :) <$> parseStatementsUntil parsingFunction endToken
 
 parseBlockStatement :: AstParser Statement
-parseBlockStatement = BlockStatement <$> parseStatementsUntil RBrace
+parseBlockStatement = BlockStatement <$> parseStatementsUntil parseStatementInScope RBrace
 
 parseIfExpression :: AstParser Expression
 parseIfExpression = do
@@ -476,7 +487,7 @@ parseIfExpression = do
   condition <- parseGroupExpression
 
   _ <- isToken LBrace
-  consequence <- parseStatementsUntil RBrace
+  consequence <- parseStatementsUntil parseStatementInScope RBrace
   _ <- isToken RBrace
 
   alternative <- do
@@ -485,7 +496,7 @@ parseIfExpression = do
       Token Else _ -> do
         _ <- isToken Else
         _ <- isToken LBrace
-        alt <- parseStatementsUntil RBrace
+        alt <- parseStatementsUntil parseStatementInScope RBrace
         _ <- isToken RBrace
         return (Just alt)
       _ ->
