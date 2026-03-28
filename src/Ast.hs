@@ -102,10 +102,12 @@ data Statement
   | StructDecl {stmtToken :: Token, structName :: String, fields :: [FieldDecl]}
   deriving (Eq, Show)
 
-data Precedence = LOWEST | EQUALS | LESSGREATER | SUM | PRODUCT | PREFIX | CALL | INDEX deriving (Ord, Eq, Show)
+data Precedence = LOWEST | LOGICAL_OR | LOGICAL_AND | EQUALS | LESSGREATER | SUM | PRODUCT | PREFIX | CALL | INDEX deriving (Ord, Eq, Show)
 
 infixToPrecedence :: TokenType -> Precedence
 infixToPrecedence token = case token of
+  Or -> LOGICAL_OR
+  And -> LOGICAL_AND
   Equal -> EQUALS
   NotEqual -> EQUALS
   LessThan -> LESSGREATER
@@ -262,6 +264,8 @@ expressionToString (InfixExpression _ left LessThan right) = "(" ++ expressionTo
 expressionToString (InfixExpression _ left GreaterThan right) = "(" ++ expressionToString left ++ " > " ++ expressionToString right ++ ")"
 expressionToString (InfixExpression _ left Equal right) = "(" ++ expressionToString left ++ " == " ++ expressionToString right ++ ")"
 expressionToString (InfixExpression _ left NotEqual right) = "(" ++ expressionToString left ++ " != " ++ expressionToString right ++ ")"
+expressionToString (InfixExpression _ left And right) = "(" ++ expressionToString left ++ " && " ++ expressionToString right ++ ")"
+expressionToString (InfixExpression _ left Or right) = "(" ++ expressionToString left ++ " || " ++ expressionToString right ++ ")"
 
 -- ============================================================
 -- Typed AST

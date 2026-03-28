@@ -303,6 +303,12 @@ parseLessThanInfixExpression = parseInfixExpression LessThan
 parserGreaterThanInfixExpression :: Expression -> AstParser Expression
 parserGreaterThanInfixExpression = parseInfixExpression GreaterThan
 
+parseAndInfixExpression :: Expression -> AstParser Expression
+parseAndInfixExpression = parseInfixExpression And
+
+parseOrInfixExpression :: Expression -> AstParser Expression
+parseOrInfixExpression = parseInfixExpression Or
+
 traceParse :: String -> a -> a
 traceParse msg x = trace ("  " ++ msg) x
 
@@ -317,6 +323,8 @@ continueInfix precedence leftExpr = do
   case peekR of
     Token tt pos | tt /= Semicolon && infixToPrecedence tt > precedence -> do
       newExpr <- case tt of
+        And -> parseAndInfixExpression leftExpr
+        Or -> parseOrInfixExpression leftExpr
         Plus -> parseSumInfixExpression leftExpr
         Minus -> parseMinusInfixExpression leftExpr
         Asterisk -> parseMulInfixExpression leftExpr

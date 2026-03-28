@@ -17,22 +17,29 @@ data Type
   | VoidT
   | ArrayT Type
   | FnT [Type] Type
-  | UnionT [Type]
+  | UnionT (Set.Set Type)
   | StructT StructName
   | UnresolvedT StructName
   | AnyT
   deriving (Show, Eq, Ord)
 
-simplifyUnion :: [Type] -> Type
-simplifyUnion ts =
-  let unique = nub ts -- remove duplicates
-   in case unique of
-        [t] -> t -- all returns same type, no need for union
-        ts -> UnionT ts -- different types, make union
+simplifyRetTy :: [Type] -> Type
+simplifyRetTy ts =
+  let s = Set.fromList ts
+   in case Set.toList s of
+        [] -> VoidT
+        [t] -> t
+        _ -> UnionT s
 
-sameUnion :: Type -> Type -> Bool
-sameUnion (UnionT t1) (UnionT t2) = (Set.fromList t1) == (Set.fromList t2)
-sameUnion t1 t2 = t1 == t2
+-- TODO: Need to write a test for this cases of inclusion
+isCompatible :: Type -> Type -> Bool
+isCompatible inferred annotated =
+  case (inferred, annotated) of
+    (AnyT, _) -> True -- inferred is AnyT, accepts any annotation
+    (_, AnyT) -> False -- inferred is specific, doesn't match AnyT annotation
+    (UnionT setInferred, UnionT setAnnotated) ->
+      Set.isSubsetOf setAnnotated setInferred
+    (t1, t2) -> t1 == t2 -- otherwise exact match
 
 type StructName = String
 
@@ -55,6 +62,7 @@ data TypeError
   | InvalidParam {pos :: Maybe Position}
   | OperatorNotDefined {operator :: String, leftType :: Type, rightType :: Type, pos :: Maybe Position}
   | InternalError {message :: String, pos :: Maybe Position}
+  | UndefinedStruct {undefinedName :: String, pos :: Maybe Position}
   deriving (Show, Eq)
 
 withPos :: Position -> TypeError -> TypeError
@@ -95,3 +103,7 @@ lookupStruct name env = Map.lookup name (typeDefs env)
 
 insertVar :: String -> Type -> TypecheckEnv -> TypecheckEnv
 insertVar name t env = env {typeEnv = Map.insert name t (typeEnv env)}
+
+data Rule
+narrow :: TypecheckEnv -> Rule -> TypecheckEnv
+narrow = undefined

@@ -29,6 +29,7 @@ main = hspec $ do
   testFunctionApplication
   testIndex
   testStruct
+  testLogicalOperators
 
 evalHelper :: String -> Object
 evalHelper program =
@@ -283,3 +284,49 @@ testStruct = describe "Test struct initialization and field access" $ do
   it "accesses field of struct returned from function" $
     evalHelper "let makePoint = fn(x, y) { return Point { x: x; y: y } }; makePoint(7, 14).y;"
       `shouldBe` IntObj 14
+
+testLogicalOperators :: Spec
+testLogicalOperators = do
+  describe "logical && and || operators" $ do
+    let testCases :: [(String, Object)]
+        testCases =
+          [ ("true && true", BoolObj True),
+            ("true && false", BoolObj False),
+            ("false && true", BoolObj False),
+            ("false && false", BoolObj False),
+            ("true || true", BoolObj True),
+            ("true || false", BoolObj True),
+            ("false || true", BoolObj True),
+            ("false || false", BoolObj False),
+            ("1 && 1", BoolObj True),
+            ("1 && 0", BoolObj False),
+            ("0 && 1", BoolObj False),
+            ("1 || 0", BoolObj True),
+            ("0 || 1", BoolObj True),
+            ("0 || 0", BoolObj False),
+            ("\"hello\" && \"world\"", BoolObj True),
+            ("\"\" && \"world\"", BoolObj False),
+            ("\"hello\" || \"world\"", BoolObj True),
+            ("\"\" || \"world\"", BoolObj True),
+            ("(1 < 2) && (3 > 2)", BoolObj True),
+            ("(1 < 2) && (3 < 2)", BoolObj False),
+            ("(1 > 2) || (3 > 2)", BoolObj True)
+          ]
+    forM_ testCases $ \(input, expected) -> do
+      describe ("parsing: " ++ input) $ do
+        it ("should evaluate to " ++ show expected) $ do
+          evalHelper input `shouldBe` expected
+
+    it "short-circuits && when left is falsy" $ do
+      let program = "let f = fn(x) { return x }; false && f(1);"
+      evalHelper program `shouldBe` BoolObj False
+
+    it "short-circuits || when left is truthy" $ do
+      let program = "let f = fn(x) { return x }; true || f(1);"
+      evalHelper program `shouldBe` BoolObj True
+
+    it "evaluates right side of && when left is truthy" $ do
+      evalHelper "true && 42" `shouldBe` BoolObj True
+
+    it "evaluates right side of || when left is falsy" $ do
+      evalHelper "false || 42" `shouldBe` BoolObj True

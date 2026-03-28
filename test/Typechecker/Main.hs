@@ -3,8 +3,9 @@
 
 module Main where
 
-import Ast (Statement (..), TStatement (..), prettyPrintStatement)
+import Ast (Statement (..), TExpression (..), TStatement (..), prettyPrintStatement)
 import Control.Monad.State.Lazy
+import Data.Set qualified as Set
 import Parser
 import Test.Hspec
 import Token (LexerState (..), Position (..))
@@ -45,7 +46,7 @@ testFunctionTypeChecking = do
       let program = "let x = fn(x:Int): String{return \"that\";}"
       case typeCheckerHelper program of
         Right (TProgram stmts) -> case head stmts of
-          TLetStatement _ name value ty -> ty `shouldBe` (FnT [IntT] StringT)
+          TLetStatement _ (TIdentifierLit _ _ ty) _ _ -> ty `shouldBe` (FnT [IntT] StringT)
   describe "Funtion with type hint" $ do
     it "Should be function that takes in int and return string" $ do
       let program = "let x = fn(x:Int): Int{return \"that\";}"
@@ -68,13 +69,13 @@ testFunctionTypeChecking = do
       let program = "let x = fn(x:Int){return \"that\";}"
       case typeCheckerHelper program of
         Right (TProgram stmts) -> case head stmts of
-          TLetStatement _ name value ty -> ty `shouldBe` (FnT [IntT] StringT)
+          TLetStatement _ (TIdentifierLit _ name ty) _ _ -> ty `shouldBe` (FnT [IntT] StringT)
         Left _ -> expectationFailure "Expected typechecked  but TypeMismatch  successfully"
     it "Should infer UnionT when if branches return different types" $ do
       let program = "let x = fn() { if (true) { return 5; } return \"hello\"; }"
       case typeCheckerHelper program of
         Right (TProgram stmts) -> case head stmts of
-          TLetStatement _ _ _ ty -> ty `shouldBe` FnT [] (UnionT [StringT, IntT])
+          TLetStatement _ (TIdentifierLit _ name ty) _ _ -> ty `shouldBe` FnT [] (UnionT (Set.fromList ([StringT, IntT])))
           _ -> expectationFailure "Expected TLetStatement"
         Left err -> expectationFailure (show err)
 

@@ -64,6 +64,8 @@ data TokenType
   | StructType
   | AnyType
   | Pipe
+  | And
+  | Or
   | Null
   | Escaped Char -- Keep?: depends on what this is for
   deriving (Eq, Show)
@@ -283,7 +285,7 @@ specialSymbolsLexer :: Lexer TokenType
 specialSymbolsLexer = lookupSpecialSymbols <$> satisfy (`elem` symbolMap)
 
 twoCharSymbols :: [((Char, TokenType), (String, TokenType))]
-twoCharSymbols = [(('!', Bang), ("!=", NotEqual)), (('=', Assign), ("==", Equal))]
+twoCharSymbols = [(('!', Bang), ("!=", NotEqual)), (('=', Assign), ("==", Equal)), (('&', Illegal), ("&&", And)), (('|', Pipe), ("||", Or))]
 
 twoCharSymbolToLexer :: (Char, TokenType) -> (String, TokenType) -> Lexer TokenType
 twoCharSymbolToLexer (c, singleToken) (s, doubleToken) = (doubleToken <$ traverse charL s) <|> (singleToken <$ charL c)
@@ -308,6 +310,8 @@ tokenizer' = withPosition $ SimpleParser $ \state ->
       | c == '"' -> runLexer stringLexer state
       | c == '!' -> runLexer specialDoubleCharSymbolsLexer state
       | c == '=' -> runLexer specialDoubleCharSymbolsLexer state
+      | c == '&' -> runLexer specialDoubleCharSymbolsLexer state
+      | c == '|' -> runLexer specialDoubleCharSymbolsLexer state
       | c `elem` symbolMap -> runLexer specialSymbolsLexer state
       | isDigit c -> runLexer safeNumberLexer state
       | isAlpha c || c == '_' || c == '$' -> runLexer identifiderAndKeywordsLexer state

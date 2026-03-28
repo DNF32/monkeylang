@@ -254,17 +254,32 @@ evalExpression (PrefixExpression (Token _ pos) operator right) = do
     evalMinus o = addPos $ ErrorObj (TypeError ("Minus operator not supported for: " ++ expressionToString right) Nothing)
 evalExpression (InfixExpression (Token _ pos) left operator right) = do
   leftSide <- unwrapReturnObj <$> evalExpression left
-  rightSide <- unwrapReturnObj <$> evalExpression right
-
-  return $ case operator of
-    Plus -> addPos $ evalSum leftSide rightSide
-    Minus -> addPos $ evalMinus leftSide rightSide
-    Asterisk -> addPos $ evalProduct leftSide rightSide
-    Slash -> addPos $ evalDivide leftSide rightSide
-    Equal -> addPos $ evalEquals leftSide rightSide
-    NotEqual -> addPos $ evalNotEquals leftSide rightSide
-    LessThan -> addPos $ evalLessThan leftSide rightSide
-    GreaterThan -> addPos $ evalGreaterThan leftSide rightSide
+  case (operator, leftSide) of
+    -- Short-circuit AND: if left is falsy, return false (don't evaluate right)
+    (And, obj) | not (isTruthy obj) -> return falseObj
+    -- Short-circuit OR: if left is truthy, return true (don't evaluate right)
+    (Or, obj) | isTruthy obj -> return trueObj
+    -- Otherwise evaluate right side
+    _ -> do
+      rightSide <- unwrapReturnObj <$> evalExpression right
+      return $ case operator of
+        And -> addPos $ case (leftSide, rightSide) of
+          (ErrorObj _, _) -> leftSide
+          (_, ErrorObj _) -> rightSide
+          _ -> if isTruthy leftSide && isTruthy rightSide then trueObj else falseObj
+        Or -> addPos $ case (leftSide, rightSide) of
+          (ErrorObj _, _) -> leftSide
+          (_, ErrorObj _) -> rightSide
+          _ -> if isTruthy leftSide || isTruthy rightSide then trueObj else falseObj
+        Plus -> addPos $ evalSum leftSide rightSide
+        Minus -> addPos $ evalMinus leftSide rightSide
+        Asterisk -> addPos $ evalProduct leftSide rightSide
+        Slash -> addPos $ evalDivide leftSide rightSide
+        Equal -> addPos $ evalEquals leftSide rightSide
+        NotEqual -> addPos $ evalNotEquals leftSide rightSide
+        LessThan -> addPos $ evalLessThan leftSide rightSide
+        GreaterThan -> addPos $ evalGreaterThan leftSide rightSide
+        _ -> addPos $ ErrorObj (TypeError ("Unknown infix operator: " ++ show operator) Nothing)
   where
     addPos obj = case obj of
       ErrorObj _ -> withPos pos obj
@@ -453,4 +468,6 @@ isTruthy obj = case obj of
   BoolObj True -> True
   BoolObj False -> False
   IntObj v1 -> v1 /= 0
+  StringObj v -> not (null v)
+  ArrayObj elems -> not (null elems)
   _ -> False

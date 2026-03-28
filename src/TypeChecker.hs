@@ -5,7 +5,7 @@ module TypeChecker where
 import Ast (Expression (..), FieldDecl (FieldDecl), Param (..), Statement (..), TExpression (..), TParam (..), TStatement (..), getType)
 import Control.Monad.State (MonadState (get), StateT, gets, lift, modify, put)
 import Data.Map qualified as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromJust, fromMaybe)
 import Token (Position, Token (..), TokenType (..))
 import Types
 
@@ -94,12 +94,12 @@ typeCheck (FunctionLit tok params returnType body) = do
   typedBody <- mapM statementTypeChecker body
   retStack <- gets currentRetTy
   put oldEnv -- restore BEFORE returning, always
-  let inferredRetT = simplifyUnion retStack
-  let tParams = map toTParam params
-  let paramTypes = map resolvedParamType params
+  inferredRetT <- simplifyRetTy <$> (mapM resolveType retStack)
+  tParams <- mapM toTParam params
+  let paramTypes = map (\(TParam _ _ ty) -> ty) tParams
   case returnType of
     Just annT
-      | sameUnion inferredRetT annT ->
+      | inferredRetT == annT ->
           return $ TFunctionLit tok tParams annT typedBody (FnT paramTypes annT)
       | otherwise ->
           lift $
@@ -112,8 +112,13 @@ typeCheck (FunctionLit tok params returnType body) = do
     Nothing ->
       return $ TFunctionLit tok tParams inferredRetT typedBody (FnT paramTypes inferredRetT)
   where
-    resolvedParamType (Param _ _ maybeT) = fromMaybe AnyT maybeT
-    toTParam (Param t n maybeT) = TParam t n (fromMaybe AnyT maybeT)
+    toTParam :: Param -> Check TParam
+    toTParam (Param t n maybeT) = do
+      resolvedT <- case maybeT of
+        Just (UnresolvedT _) -> resolveType (fromJust maybeT)
+        Just ty -> return ty
+        Nothing -> return AnyT
+      return (TParam t n resolvedT)
 typeCheck _ = lift (Left $ InvalidParam Nothing)
 
 extendedTypeEnv :: [Param] -> TypecheckEnv -> TypecheckEnv
@@ -130,6 +135,21 @@ mkOpError :: String -> Type -> Type -> Either TypeError Type
 mkOpError op l r = Left $ OperatorNotDefined op l r Nothing
 
 -- We assume 'pos' is passed in from the caller (the InfixExpression token)
+resolveType :: Type -> Check Type
+resolveType (UnresolvedT name) = do
+  structDefs <- gets typeDefs
+  if Map.member name structDefs
+    then
+      return (StructT name)
+    else
+      lift $
+        Left $
+          UndefinedStruct
+            { undefinedName = name,
+              pos = Nothing
+            }
+resolveType ty = return ty
+
 typeCheckSum :: Type -> Type -> Either TypeError Type
 typeCheckSum IntT IntT = Right IntT
 typeCheckSum FloatT FloatT = Right FloatT
