@@ -28,7 +28,7 @@ typeCheckerHelper program =
   let state = initialState program
    in case runAstParser parseProgram state of
         Right (prog@(Program _), _) ->
-          fst <$> runStateT (statementTypeChecker prog) emptyEnv
+          fst <$> runStateT (do newProg <- structResolutionPhase prog; statementTypeChecker newProg) emptyEnv
         Left parseErr ->
           Left $ InternalError {message = show parseErr, pos = Nothing}
 
@@ -47,6 +47,8 @@ testFunctionTypeChecking = do
       case typeCheckerHelper program of
         Right (TProgram stmts) -> case head stmts of
           TLetStatement _ (TIdentifierLit _ _ ty) _ _ -> ty `shouldBe` (FnT [IntT] StringT)
+          _ -> expectationFailure "Expected TLetStatement"
+        Left err -> expectationFailure (show err)
   describe "Funtion with type hint" $ do
     it "Should be function that takes in int and return string" $ do
       let program = "let x = fn(x:Int): Int{return \"that\";}"
@@ -70,6 +72,7 @@ testFunctionTypeChecking = do
       case typeCheckerHelper program of
         Right (TProgram stmts) -> case head stmts of
           TLetStatement _ (TIdentifierLit _ name ty) _ _ -> ty `shouldBe` (FnT [IntT] StringT)
+          _ -> expectationFailure "Expected TLetStatement"
         Left _ -> expectationFailure "Expected typechecked  but TypeMismatch  successfully"
     it "Should infer UnionT when if branches return different types" $ do
       let program = "let x = fn() { if (true) { return 5; } return \"hello\"; }"
@@ -77,6 +80,21 @@ testFunctionTypeChecking = do
         Right (TProgram stmts) -> case head stmts of
           TLetStatement _ (TIdentifierLit _ name ty) _ _ -> ty `shouldBe` FnT [] (UnionT (Set.fromList ([StringT, IntT])))
           _ -> expectationFailure "Expected TLetStatement"
+        Left err -> expectationFailure (show err)
+  describe "Resolve a struct type hint" $ do
+    it "Resolved the return type to the Struct Foo" $ do
+      let program = "Struct Foo { x: Int; y: Int; }; let x = fn(x: Int): Foo {return Foo {x: x; y: x;}}"
+      case typeCheckerHelper program of
+        Right (TProgram stmts) -> case head stmts of
+          TLetStatement _ (TIdentifierLit _ name ty) _ _ -> ty `shouldBe` FnT [IntT] (StructT "Foo")
+          _ -> expectationFailure "expected tletstatement"
+        Left err -> expectationFailure (show err)
+    it "Resolved the return type to the Struct Foo" $ do
+      let program = "Struct Foo { x: Union[Foo,Null, Int]; y:Int ; }; let x = fn(x: Int): Foo {return Foo {x: x; y: x;}}"
+      case typeCheckerHelper program of
+        Right (TProgram stmts) -> case head stmts of
+          TLetStatement _ (TIdentifierLit _ name ty) _ _ -> ty `shouldBe` FnT [IntT] (StructT "Foo")
+          _ -> expectationFailure "expected tletstatement"
         Left err -> expectationFailure (show err)
 
 -- helpers

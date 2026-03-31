@@ -1,4 +1,5 @@
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 {- HLINT ignore "Used otherwise as a pattern" -}
@@ -7,6 +8,7 @@ module Ast
   ( Expression (..),
     Statement (..),
     FieldInitialization (..),
+    TFieldInitialization (..),
     TExpression (..),
     TStatement (..),
     Param (..),
@@ -44,8 +46,16 @@ data Expression
   | CallExpression {token :: Token, function :: Expression, arguments :: [Expression]}
   | IndexExpression {token :: Token, left :: Expression, index :: Expression}
   | IfExpression {token :: Token, condition :: Expression, consequence :: [Statement], alternative :: Maybe [Statement]}
-  | FieldAccess {token :: Token, object :: Expression, fieldName :: String}
+   | FieldAccess {token :: Token, object :: Expression, fieldName :: String}
   | StructInitialization {token :: Token, structName :: String, fieldInits :: [FieldInitialization]}
+  deriving (Eq, Show)
+
+data TFieldInitialization = TFieldInit
+  { tInitToken :: Token,
+    tInitFieldName :: String,
+    tInitValue :: TExpression,
+    ty :: Type
+  }
   deriving (Eq, Show)
 
 exprToken :: Expression -> Token
@@ -281,10 +291,29 @@ data TExpression
   | TPrefixExpression {tToken :: Token, operator :: Operator, right :: TExpression, ty :: Type}
   | TInfixExpression {tToken :: Token, left :: TExpression, operator :: Operator, right :: TExpression, ty :: Type}
   | TFunctionLit {tToken :: Token, parameters :: [TParam], returnType :: Type, body :: [TStatement], ty :: Type} -- Expression!
-  | TCallExpression {tToken :: Token, function :: TExpression, arguments :: [TExpression]}
-  | TIndexExpression {tToken :: Token, left :: TExpression, index :: TExpression}
+  | TCallExpression {tToken :: Token, function :: TExpression, arguments :: [TExpression], ty :: Type}
+  | TIndexExpression {tToken :: Token, left :: TExpression, index :: TExpression, ty :: Type} -- This can only old and TIntLit as index
   | TIfExpression {tToken :: Token, condition :: TExpression, consequence :: [TStatement], alternative :: Maybe [TStatement], ty :: Type}
+  | TFieldAccess {token :: Token, object :: TExpression, fieldName :: String, ty :: Type} -- Will typecheck iff the fieldname exists
+  | TStructInitialization {token :: Token, structName :: String, fieldInits :: [TFieldInitialization], ty :: Type}
   deriving (Eq, Show)
+
+getType :: TExpression -> Type
+getType = \case
+  TIntLit {ty = t} -> t
+  TFloatLit {ty = t} -> t
+  TStringLit {ty = t} -> t
+  TBoolLit {ty = t} -> t
+  TNullLit {ty = t} -> t
+  TIdentifierLit {ty = t} -> t
+  TPrefixExpression {ty = t} -> t
+  TInfixExpression {ty = t} -> t
+  TFunctionLit {ty = t} -> t
+  TCallExpression {ty = t} -> t
+  TIndexExpression {ty = t} -> t
+  TIfExpression {ty = t} -> t
+  TFieldAccess {ty = t} -> t
+  TStructInitialization {ty = t} -> t
 
 data TStatement
   = TProgram {tStatements :: [TStatement]}
@@ -301,9 +330,6 @@ data TParam = TParam
     tParamType :: Type
   }
   deriving (Eq, Show)
-
-getType :: TExpression -> Type
-getType = ty
 
 class AstEq a where
   (?==) :: a -> a -> Bool

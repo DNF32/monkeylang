@@ -1,12 +1,14 @@
+{-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE LambdaCase #-}
 
 module TypeChecker where
 
-import Ast (Expression (..), FieldDecl (FieldDecl), Param (..), Statement (..), TExpression (..), TParam (..), TStatement (..), getType)
+import Ast (Expression (..), FieldDecl (FieldDecl, fieldName), FieldInitialization (FieldInit), Param (..), Statement (..), TExpression (..), TFieldInitialization (TFieldInit), TParam (..), TStatement (..), getType)
 import Control.Monad.State (MonadState (get), StateT, gets, lift, modify, put)
 import Data.Map qualified as Map
 import Data.Maybe (fromJust, fromMaybe)
-import Token (Position, Token (..), TokenType (..))
+import Data.Set qualified as Set
+import Token (Position, Token (..), TokenType (..), getPos)
 import Types
 
 -- ============================================================
@@ -14,6 +16,14 @@ import Types
 -- ============================================================
 --
 --
+--
+structResolutionPhase :: Statement -> Check Statement
+structResolutionPhase prog@(Program stms) = do
+  prog' <- collectStructDecl prog
+  resolveAllStructs
+  checkCycles
+  return prog'
+
 --
 collectStructDecl :: Statement -> Check Statement
 collectStructDecl (Program stms) = do
@@ -24,10 +34,42 @@ collectStructDecl (Program stms) = do
           ]
   let filteredStms = filter (not . isStructDecl) stms
   modify (\env -> env {typeDefs = allStructDefs})
+  -- Resolve all UnresolvedT references in struct definitions
+  resolveAllStructs
   return (Program filteredStms)
   where
     isStructDecl (StructDecl {}) = True
     isStructDecl _ = False
+
+resolveAllStructs :: Check ()
+resolveAllStructs = do
+  env <- get
+  let typeDefs' = typeDefs env
+  resolvedDefs <- traverse resolveStructDef typeDefs'
+  modify (\e -> e {typeDefs = resolvedDefs})
+
+checkCycles :: Check ()
+checkCycles = do
+  env <- get
+  _ <- Map.traverseWithKey (\k v -> checkNoProblematicCycles k v) (typeDefs env)
+  return ()
+
+resolveStructDef :: StructDef -> Check StructDef
+resolveStructDef fieldMap = traverse resolveType fieldMap
+
+checkNoProblematicCycles :: StructName -> StructDef -> Check ()
+checkNoProblematicCycles structName structDef = do
+  if any (fieldAsCycleType structName) (Map.elems structDef)
+    then lift $ Left $ InternalError {message = "Non-optional recursive reference in struct " ++ structName, pos = Nothing}
+    else return ()
+  where
+    fieldAsCycleType :: String -> Type -> Bool
+    fieldAsCycleType sName (UnresolvedT name) = sName == name
+    fieldAsCycleType sName (StructT name) = sName == name
+    fieldAsCycleType sName unionTy@(UnionT _) = (unionHas (UnresolvedT sName) unionTy || unionHas (StructT sName) unionTy) && not (isOptional unionTy)
+    fieldAsCycleType _ _ = False
+
+-- TODO: We need to check to check if we have or not an optional in there If we do there isn't a cycle
 
 type Check a = StateT TypecheckEnv (Either TypeError) a
 
@@ -88,6 +130,58 @@ typeCheck (IfExpression tok condition consequence alternative) = do
   tConsequence <- mapM statementTypeChecker consequence
   tAlternative <- mapM (mapM statementTypeChecker) alternative
   return $ TIfExpression tok tCondition tConsequence tAlternative VoidT
+typeCheck (FieldAccess tok@(Token _ pos) object fieldName) = do
+  tObject <- typeCheck object
+  let objType = getType tObject
+  case objType of
+    (StructT structName) -> do
+      fieldTy <- gets (lookupFieldType structName fieldName)
+      case fieldTy of
+        Just ty -> return $ TFieldAccess tok tObject fieldName ty
+        Nothing ->
+          lift $
+            Left $
+              UndefinedField
+                { structName = structName,
+                  undefinedFieldName = fieldName,
+                  pos = Just pos
+                }
+    _ ->
+      lift $
+        Left $
+          TypeMismatch
+            { expected = AnyT,
+              got = objType,
+              pos = Just pos
+            }
+typeCheck (StructInitialization tok sName fieldInits) = do
+  tFieldInits <- mapM (lookupField sName) fieldInits
+  return $ TStructInitialization tok sName tFieldInits (StructT sName)
+  where
+    lookupField :: String -> FieldInitialization -> Check TFieldInitialization
+    lookupField sName (FieldInit tok fname initValue) = do
+      tExpr <- typeCheck initValue
+      let foundTy = getType tExpr
+      fieldTy <- gets (lookupFieldType sName fname)
+      case fieldTy of
+        Just ty
+          | isCompatible ty foundTy -> return (TFieldInit tok fname tExpr ty)
+          | otherwise ->
+              lift $
+                Left $
+                  TypeMismatch
+                    { expected = ty,
+                      got = foundTy,
+                      pos = Just (_tokenPosition tok)
+                    }
+        Nothing ->
+          lift $
+            Left $
+              UndefinedField
+                { structName = sName,
+                  undefinedFieldName = fname,
+                  pos = Just (getPos tok)
+                }
 typeCheck (FunctionLit tok params returnType body) = do
   oldEnv <- get
   modify (extendedTypeEnv params)
@@ -98,16 +192,17 @@ typeCheck (FunctionLit tok params returnType body) = do
   tParams <- mapM toTParam params
   let paramTypes = map (\(TParam _ _ ty) -> ty) tParams
   case returnType of
-    Just annT
-      | inferredRetT == annT ->
-          return $ TFunctionLit tok tParams annT typedBody (FnT paramTypes annT)
-      | otherwise ->
+    Just annT -> do
+      resolvedAnnT <- resolveType annT
+      if isCompatible inferredRetT resolvedAnnT
+        then return $ TFunctionLit tok tParams resolvedAnnT typedBody (FnT paramTypes inferredRetT)
+        else
           lift $
             Left $
               TypeMismatch
-                { expected = annT,
-                  got = inferredRetT, -- more accurate than filterhead
-                  pos = Just (_tokenPosition tok)
+                { expected = resolvedAnnT,
+                  got = inferredRetT,
+                  pos = Just (getPos tok)
                 }
     Nothing ->
       return $ TFunctionLit tok tParams inferredRetT typedBody (FnT paramTypes inferredRetT)
@@ -148,6 +243,16 @@ resolveType (UnresolvedT name) = do
             { undefinedName = name,
               pos = Nothing
             }
+resolveType (UnionT s) = do
+  resolvedTypes <- traverse resolveType (Set.toList s)
+  return (UnionT (Set.fromList resolvedTypes))
+resolveType (ArrayT elemType) = do
+  resolvedElemType <- resolveType elemType
+  return (ArrayT resolvedElemType)
+resolveType (FnT paramTypes retType) = do
+  resolvedParamTypes <- traverse resolveType paramTypes
+  resolvedRetType <- resolveType retType
+  return (FnT resolvedParamTypes resolvedRetType)
 resolveType ty = return ty
 
 typeCheckSum :: Type -> Type -> Either TypeError Type

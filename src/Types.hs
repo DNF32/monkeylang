@@ -39,7 +39,20 @@ isCompatible inferred annotated =
     (_, AnyT) -> False -- inferred is specific, doesn't match AnyT annotation
     (UnionT setInferred, UnionT setAnnotated) ->
       Set.isSubsetOf setAnnotated setInferred
+    (UnionT setInferred, _) ->
+      Set.member annotated setInferred
     (t1, t2) -> t1 == t2 -- otherwise exact match
+
+-- Check if a type is optional (can be Null)
+isOptional :: Type -> Bool
+isOptional NullT = True
+isOptional (UnionT s) = Set.member NullT s
+isOptional _ = False
+
+-- Check if a type is contained in a union
+unionHas :: Type -> Type -> Bool
+unionHas ty (UnionT set) = Set.member ty set
+unionHas _ _ = False
 
 type StructName = String
 
@@ -63,6 +76,7 @@ data TypeError
   | OperatorNotDefined {operator :: String, leftType :: Type, rightType :: Type, pos :: Maybe Position}
   | InternalError {message :: String, pos :: Maybe Position}
   | UndefinedStruct {undefinedName :: String, pos :: Maybe Position}
+  | UndefinedField {structName :: String, undefinedFieldName :: String, pos :: Maybe Position}
   deriving (Show, Eq)
 
 withPos :: Position -> TypeError -> TypeError
@@ -101,9 +115,15 @@ lookupVar name env = Map.lookup name (typeEnv env)
 lookupStruct :: StructName -> TypecheckEnv -> Maybe StructDef
 lookupStruct name env = Map.lookup name (typeDefs env)
 
+lookupFieldType :: StructName -> FieldName -> TypecheckEnv -> Maybe Type
+lookupFieldType structName fieldName env = do
+  fieldTypes <- lookupStruct structName env
+  Map.lookup fieldName fieldTypes
+
 insertVar :: String -> Type -> TypecheckEnv -> TypecheckEnv
 insertVar name t env = env {typeEnv = Map.insert name t (typeEnv env)}
 
 data Rule
+
 narrow :: TypecheckEnv -> Rule -> TypecheckEnv
 narrow = undefined

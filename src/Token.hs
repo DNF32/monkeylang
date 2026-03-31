@@ -55,8 +55,9 @@ data TokenType
   | If -- Remove String: always "if"
   | Else -- Remove String: always "else"
   | Return -- Remove String: always "return"
-  -- type system
-  | IntType
+  | Union
+  | -- type system
+    IntType
   | StringType
   | BoolType
   | FloatType
@@ -250,12 +251,13 @@ keywords =
     ("if", If),
     ("else", Else),
     ("return", Return),
-    ("null", Null),
+    ("Null", Null),
     ("Int", IntType), -- needs its own TokenType
     ("String", StringType),
     ("Bool", BoolType), -- missing!
     ("Float", FloatType),
     ("Void", VoidType), -- missing!
+    ("Union", Union),
     ("Struct", StructType),
     ("Any", AnyType)
   ]

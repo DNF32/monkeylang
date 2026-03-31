@@ -8,6 +8,7 @@ import Control.Lens
 import Data.Char (GeneralCategory (LowercaseLetter))
 import Data.List (intercalate)
 import Data.Map qualified as Map
+import Data.Set qualified as Set
 import Debug.Trace
 import SimpleParser
 import Token
@@ -363,14 +364,30 @@ parseLetStatement = do
 parseTypeHint :: AstParser Type
 parseTypeHint = do
   _ <- isToken Colon
-  parseBaseType
+  choice
+    [ parseUnionExplicit, -- Try union with |
+      parseUnion, -- Try Union[...]
+      parseBaseType -- Fall back to single type
+    ]
 
 parseBaseType :: AstParser Type
-parseBaseType =
-  choice
-    [ parseNative,
-      parseUnresolvedStruct
-    ]
+parseBaseType = choice [parseNative, parseUnresolvedStruct]
+
+parseUnions :: AstParser Type
+parseUnions = choice [parseUnion, parseUnionExplicit]
+
+parseUnion :: AstParser Type
+parseUnion = do
+  typeList <- sepBy parseBaseType (isToken Pipe)
+  return (simplifyRetTy typeList)
+
+parseUnionExplicit :: AstParser Type
+parseUnionExplicit = do
+  _ <- isToken Union
+  _ <- isToken LBracket
+  typeList <- sepBy parseBaseType (isToken Comma)
+  _ <- isToken RBracket
+  return (simplifyRetTy typeList)
 
 parseNative :: AstParser Type
 parseNative = do
@@ -383,6 +400,7 @@ parseNative = do
         (BoolType, BoolT),
         (FloatType, FloatT), -- need FloatT in your Type!
         (VoidType, VoidT),
+        (Null, NullT),
         (AnyType, AnyT)
       ]
     toParser (tokenT, t) = t <$ isToken tokenT
