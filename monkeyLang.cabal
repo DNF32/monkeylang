@@ -66,6 +66,7 @@ library
                     Eval
                     TypeChecker
                     Types
+                    BuiltIns
     -- Modules included in this library but not exported.
     other-modules: SimpleParser
 

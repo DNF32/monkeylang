@@ -319,3 +319,47 @@ statementTypeChecker (ExpressionStatement tok expr) = do
 statementTypeChecker (BlockStatement stmts) = do
   tStmts <- mapM statementTypeChecker stmts
   return (TBlockStatement tStmts)
+
+branchEnv :: TypecheckEnv -> TExpression -> (TypecheckEnv, TypecheckEnv)
+branchEnv = undefined
+
+-- branchEnv initialEnv (TInfixExpression tok left NotEqual right ty)  = do
+--  let lTy =getType left
+--  let rTy = getType right
+--  if isCompatible lTy rTy || isCompatible rTy lTy
+--
+-- branchEnv initialEnv (TIdentifierLit tok name ty) = do
+--
+--    if canBeTruthy ty
+--      then
+
+truthyType :: Type -> Maybe Type
+truthyType (UnionT set) = Just (UnionT (Set.filter canBeTruthy set))
+truthyType VoidT = Nothing
+truthyType NullT = Nothing
+truthyType ty = Just ty
+
+falsyType :: Type -> Maybe Type
+falsyType (UnionT set) = Just (UnionT (Set.filter canBeFalsy set))
+falsyType ty =
+  if canBeFalsy ty
+    then Just ty
+    else Nothing
+
+canBeTruthy :: Type -> Bool
+canBeTruthy NullT = False -- Null is always falsy
+canBeTruthy BoolT = True -- Bool can be true
+canBeTruthy IntT = True -- Int can be non-zero (truthy)
+canBeTruthy StringT = True -- String can be non-empty (truthy)
+canBeTruthy (ArrayT _) = True -- Array can be non-empty (truthy)
+canBeTruthy VoidT = False -- Void is always falsy
+canBeTruthy _ = True -- Others: assume can be truthy
+
+canBeFalsy :: Type -> Bool
+canBeFalsy NullT = True -- Null is falsy
+canBeFalsy BoolT = True -- Bool can be false
+canBeFalsy IntT = True -- Int can be zero (falsy)
+canBeFalsy StringT = True -- String can be empty (falsy)
+canBeFalsy (ArrayT _) = True -- Array can be empty (falsy)
+canBeFalsy VoidT = True -- Void is falsy
+canBeFalsy _ = True -- Others: assume can be falsy
