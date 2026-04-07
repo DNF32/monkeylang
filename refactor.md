@@ -10,6 +10,8 @@
 - normalize `UnionT` handling (e.g., merge/simplify in one place) and add tests for union inclusion
 - add a dedicated `Env` module for both eval and typechecker to remove Map duplication
 - add a `Positioned` helper to attach positions to errors uniformly across lexer/parser/eval/typechecker
+- add an error-reporting pipeline that captures source spans and original input slices, so type mismatches report "expected/got" with the exact snippet and position
+- add flow-sensitive field refinements (e.g., `fieldEnv` keyed by `(varName, fieldName)`) instead of mutating `typeDefs` when narrowing `x.field`
 - improve `IfExpression` typing to return union of branch types rather than `VoidT`
 - add a safe `popRetTy` that handles empty stack (avoid partial `tail`)
 - use newtype wrappers for `StructName`, `FieldName` for stronger typing

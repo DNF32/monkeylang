@@ -426,6 +426,22 @@ branchEnv initialEnv (TFloatLit {}) = (Just initialEnv, Nothing)
 branchEnv initialEnv (TPrefixExpression _ Bang right _) = do
   let (truthyEnv, falsyEnv) = branchEnv initialEnv right
   (falsyEnv, truthyEnv)
+branchEnv initialEnv (TInfixExpression tok left Equal right ty) = do
+  let leftTy = getType left
+  let rightTy = getType right
+
+  case intersectType leftTy rightTy of
+    Nothing -> (Nothing, Just initialEnv)
+    Just narrowTy -> case 
+  where
+    narrow:: TExpression -> Type -> TExpression
+    narrow expr narrowTy = case expr of
+      TIdentifierLit tok name _ ->
+        TIdentifierLit tok name narrowTy
+      TFieldAccess tok obj fieldName _ ->
+        TFieldAccess tok obj fieldName narrowTy
+      _ ->
+        expr
 
 --
 normalizeUnion :: Type -> Maybe Type

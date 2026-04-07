@@ -43,6 +43,34 @@ isCompatible inferred annotated =
       Set.member annotated setInferred
     (t1, t2) -> t1 == t2 -- otherwise exact match
 
+intersect :: Type -> Type -> Bool
+intersect t1 t2 =
+  case (t1, t2) of
+    (AnyT, _) -> True
+    (_, AnyT) -> True
+    (UnionT t1, UnionT t2) ->
+      not . Set.null $ Set.intersection t1 t2
+    (UnionT t1, t2) ->
+      Set.member t2 t1
+    (t1, UnionT t2) ->
+      Set.member t1 t2
+    (t1, t2) -> t1 == t2
+
+intersectType :: Type -> Type -> Maybe Type
+intersectType t1 t2 =
+  case (t1, t2) of
+    (AnyT, t) -> Just t
+    (t, AnyT) -> Just t
+    (UnionT s1, UnionT s2) ->
+      let s = Set.intersection s1 s2
+       in if Set.null s then Nothing else Just (UnionT s)
+    (UnionT s, t) ->
+      if Set.member t s then Just t else Nothing
+    (t, UnionT s) ->
+      if Set.member t s then Just t else Nothing
+    (t1', t2') ->
+      if t1' == t2' then Just t1' else Nothing
+
 -- Check if a type is optional (can be Null)
 isOptional :: Type -> Bool
 isOptional NullT = True

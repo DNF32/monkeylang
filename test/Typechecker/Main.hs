@@ -176,6 +176,19 @@ testCallExprTyping = do
         Left (TypeMismatch {expected = IntT, got = UnionT set}) -> do
           set `shouldBe` Set.fromList [IntT, StringT, NullT]
         other -> expectationFailure ("Expected TypeMismatch IntT, got: " ++ show other)
+    it "Channing of function calls with type mismatch" $ do
+      let program =
+            "let x: Union[String, Int, Null] = Null; let bar = fn(x:String){return x;}; let foo = fn (x:Int){return x;} foo(bar(x));"
+      case typeCheckerHelper program of
+        Left (TypeMismatch {expected = StringT, got = UnionT set}) -> do
+          set `shouldBe` Set.fromList [IntT, StringT, NullT]
+        other -> expectationFailure ("Expected TypeMismatch StringT, got: " ++ show other)
+    it "Channing of function calls without type mismatch" $ do
+      let program =
+            "let x = 5; let bar = fn(x:Int){return x;}; let foo = fn (x:Int){return x;} foo(bar(x));"
+      case typeCheckerHelper program of
+        Right _ -> pure ()
+        other -> expectationFailure ("Expected program to typecheck")
 
 -- helpers
 
