@@ -19,6 +19,8 @@ main = hspec $ do
   testInfixExpressions
   testLetStatements
   testFunctionTypeChecking
+  testIfBranchingTypeChecking
+  testIfBranchingTypeNarrowing
 
 initialState :: String -> LexerState
 initialState input = LexerState {getInput = input, currentPosition = Position {_line = 1, _column = 1}}
@@ -104,11 +106,52 @@ testIfBranchingTypeChecking = do
       let program = "let x: Union[String, Int, Null] = 5;if (x){\n  let y = 10;\n}else{\n  let y= \"This is the end\"\n}"
       case typeCheckerHelper program of
         Right (TProgram stmts, env) -> do
-          print env
           case lookupVar "y" env of
             Just ty -> ty `shouldBe` UnionT (Set.fromList [IntT, StringT])
             _ -> expectationFailure "Expected TLetStatement"
         Left err -> expectationFailure (show err)
+    it "It should be only detech the type of one branch" $ do
+      let program = "if (1){\n  let y = 10;\n}else{\n  let y= \"This is the end\"\n}"
+      case typeCheckerHelper program of
+        Right (TProgram stmts, env) -> do
+          case lookupVar "y" env of
+            Just ty -> ty `shouldBe` IntT
+            _ -> expectationFailure "Expected TLetStatement"
+        Left err -> expectationFailure (show err)
+
+-- Additional type narrowing tests
+testIfBranchingTypeNarrowing :: Spec
+testIfBranchingTypeNarrowing = do
+  describe "If branching type narrowing (advanced)" $ do
+    it "Should narrow to falsy type in true branch of negation" $ do
+      let program = "let x: Union[String, Int, Null] = Null; if (!x) { let y = 10; } else { let y = \"hello\"; }"
+      case typeCheckerHelper program of
+        Right (TProgram stmts, env) -> do
+          case lookupVar "y" env of
+            Just ty -> ty `shouldBe` UnionT (Set.fromList [IntT, StringT])
+            _ -> expectationFailure "Expected TLetStatement"
+        Left err -> expectationFailure (show err)
+    it "Should narrow progressively through nested conditions" $ do
+      let program = "let x: Union[String, Int, Null] = 5; if (x) { let y = x; if (y) { let z = 10; } }"
+      case typeCheckerHelper program of
+        Right (TProgram stmts, env) -> do
+          case lookupVar "y" env of
+            Just ty -> ty `shouldBe` UnionT (Set.fromList [IntT, StringT])
+            _ -> expectationFailure "Expected TLetStatement"
+          case lookupVar "z" env of
+            Just ty -> ty `shouldBe` IntT
+            _ -> expectationFailure "Expected TLetStatement"
+        Left err -> expectationFailure (show err)
+    it "Should not narrow if condition is always true" $ do
+      let program = "let x: Int = 5; if (x) { let y = 10; }"
+      case typeCheckerHelper program of
+        Right (TProgram stmts, _) -> stmts `shouldSatisfy` (\s -> length s > 0)
+        Left err -> expectationFailure (show err)
+    it "Should error if condition is always false" $ do
+      let program = "if (null) { let y = 10; }"
+      case typeCheckerHelper program of
+        Left _ -> return () -- Expected to fail
+        Right _ -> expectationFailure "Should not typecheck (always false condition)"
 
 -- helpers
 
@@ -129,7 +172,7 @@ testLiterals = describe "Literals" $ do
   it "false gets BoolT" $ do
     getLetType <$> fst <$> typeCheckerHelper "let x = false;" `shouldBe` Right (Just BoolT)
   it "null gets NullT" $ do
-    getLetType <$> fst <$> typeCheckerHelper "let x = null;" `shouldBe` Right (Just NullT)
+    getLetType <$> fst <$> typeCheckerHelper "let x = Null;" `shouldBe` Right (Just NullT)
 
 testPrefixExpressions :: Spec
 testPrefixExpressions = describe "Prefix expressions" $ do
@@ -139,10 +182,8 @@ testPrefixExpressions = describe "Prefix expressions" $ do
     getLetType <$> fst <$> typeCheckerHelper "let x = -5;" `shouldBe` Right (Just IntT)
   it "-3.14 gets FloatT" $ do
     getLetType <$> fst <$> typeCheckerHelper "let x = -3.14;" `shouldBe` Right (Just FloatT)
-  it "!5 is a type error" $ do
-    case typeCheckerHelper "let x = !5;" of
-      Left (TypeMismatch {}) -> return ()
-      other -> expectationFailure $ "Expected TypeMismatch"
+  it "!5 gets BoolT" $ do
+    getLetType <$> fst <$> typeCheckerHelper "let x = !5;" `shouldBe` Right (Just BoolT)
 
 testInfixExpressions :: Spec
 testInfixExpressions = describe "Infix expressions" $ do
@@ -184,7 +225,7 @@ testLetStatements = describe "Let statements" $ do
   it "annotation mismatch — type error" $ do
     case typeCheckerHelper "let x : Int = \"hello\";" of
       Left (TypeMismatch {expected = IntT, got = StringT}) -> return ()
-      other -> expectationFailure $ "Expected TypeMismatch Int/String, "
+      other -> expectationFailure $ "Expected TypeMismatch Int/String, got: " ++ show other
   it "let binding is available in subsequent expression" $ do
     case typeCheckerHelper "let x = 5; let y = x;" of
       Right (TProgram stmts, _) -> case stmts of

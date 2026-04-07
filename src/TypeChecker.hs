@@ -97,8 +97,7 @@ typeCheck (PrefixExpression tok@(Token _ pos) operator right) = do
   tRight <- typeCheck right
   let rightType = getType tRight
   resultType <- lift $ case (operator, rightType) of
-    (Bang, BoolT) -> Right BoolT
-    (Bang, AnyT) -> Right BoolT
+    (Bang, _) -> Right BoolT  -- Bang works on any type, returns Bool
     (Minus, IntT) -> Right IntT
     (Minus, FloatT) -> Right FloatT
     (Minus, AnyT) -> Right AnyT
@@ -134,10 +133,16 @@ typeCheck (IfExpression tok condition consequence alternative) = do
   put branchLessEnv
   tAlternative <- typeCheckAlt falsyEnv alternative
   outFalsyEnv <- get
-  outputEnv <- lift $ case (truthyEnv, falsyEnv) of
-    (Nothing, _) -> Right outFalsyEnv -- truthy unreachable, use falsy
-    (_, Nothing) -> Right outTruthEnv -- falsy unreachable, use truthy
-    _ -> mergeEnvs outTruthEnv outFalsyEnv branchLessEnv
+  outputEnv <- lift $ case alternative of
+    Nothing -> 
+      case (truthyEnv, falsyEnv) of
+        (Nothing, _) -> Right outFalsyEnv -- truthy unreachable, use falsy
+        _ -> Right outTruthEnv -- no else branch, use truth branch
+    Just _ ->
+      case (truthyEnv, falsyEnv) of
+        (Nothing, _) -> Right outFalsyEnv -- truthy unreachable, use falsy
+        (_, Nothing) -> Right outTruthEnv -- falsy unreachable, use truthy
+        _ -> mergeEnvs outTruthEnv outFalsyEnv branchLessEnv
   put outputEnv
   return $ TIfExpression tok tCondition tConsequence tAlternative VoidT
   where
