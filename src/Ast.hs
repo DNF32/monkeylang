@@ -46,7 +46,7 @@ data Expression
   | CallExpression {token :: Token, function :: Expression, arguments :: [Expression]}
   | IndexExpression {token :: Token, left :: Expression, index :: Expression}
   | IfExpression {token :: Token, condition :: Expression, consequence :: [Statement], alternative :: Maybe [Statement]}
-   | FieldAccess {token :: Token, object :: Expression, fieldName :: String}
+  | FieldAccess {token :: Token, object :: Expression, fieldName :: String}
   | StructInitialization {token :: Token, structName :: String, fieldInits :: [FieldInitialization]}
   deriving (Eq, Show)
 
@@ -293,7 +293,7 @@ data TExpression
   | TFunctionLit {tToken :: Token, parameters :: [TParam], returnType :: Type, body :: [TStatement], ty :: Type} -- Expression!
   | TCallExpression {tToken :: Token, function :: TExpression, arguments :: [TExpression], ty :: Type}
   | TIndexExpression {tToken :: Token, left :: TExpression, index :: TExpression, ty :: Type} -- This can only old and TIntLit as index
-  | TIfExpression {tToken :: Token, condition :: TExpression, consequence :: [TStatement], alternative :: Maybe [TStatement], ty :: Type}
+  | TIfExpression {tToken :: Token, condition :: TExpression, consequence :: Maybe TStatement, alternative :: Maybe TStatement, ty :: Type}
   | TFieldAccess {token :: Token, object :: TExpression, fieldName :: String, ty :: Type} -- Will typecheck iff the fieldname exists
   | TStructInitialization {token :: Token, structName :: String, fieldInits :: [TFieldInitialization], ty :: Type}
   deriving (Eq, Show)

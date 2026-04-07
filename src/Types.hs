@@ -70,7 +70,7 @@ type TypeEnv = Map.Map String Type
 
 data TypeError
   = TypeMismatch {expected :: Type, got :: Type, pos :: Maybe Position}
-  | UndefinedVariable {varName :: String, pos :: Maybe Position}
+  | UndefinedVariable {varName :: String, pos :: Maybe Position, localMessage :: Maybe String}
   | NotCallable {gotType :: Type, pos :: Maybe Position}
   | InvalidParam {pos :: Maybe Position}
   | OperatorNotDefined {operator :: String, leftType :: Type, rightType :: Type, pos :: Maybe Position}
@@ -91,6 +91,7 @@ data TypecheckEnv = TypecheckEnv
     typeDefs :: TypeDefs,
     currentRetTy :: [Type]
   }
+  deriving (Show)
 
 pushRetTy :: Type -> TypecheckEnv -> TypecheckEnv
 pushRetTy ty env =

@@ -6,7 +6,7 @@ module TypeChecker where
 import Ast (Expression (..), FieldDecl (FieldDecl, fieldName), FieldInitialization (FieldInit), Param (..), Statement (..), TExpression (..), TFieldInitialization (TFieldInit), TParam (..), TStatement (..), getType)
 import Control.Monad.State (MonadState (get), StateT, gets, lift, modify, put)
 import Data.Map qualified as Map
-import Data.Maybe (fromJust, fromMaybe)
+import Data.Maybe (fromJust, fromMaybe, listToMaybe)
 import Data.Set qualified as Set
 import Token (Position, Token (..), TokenType (..), getPos)
 import Types
@@ -127,9 +127,51 @@ typeCheck (InfixExpression tok@(Token _ pos) left operator right) = do
     updatePos (Right t) = Right t
 typeCheck (IfExpression tok condition consequence alternative) = do
   tCondition <- typeCheck condition
-  tConsequence <- mapM statementTypeChecker consequence
-  tAlternative <- mapM (mapM statementTypeChecker) alternative
+  branchLessEnv <- get
+  let (truthyEnv, falsyEnv) = branchEnv branchLessEnv tCondition
+  tConsequence <- typeCheckBody truthyEnv consequence
+  outTruthEnv <- get
+  put branchLessEnv
+  tAlternative <- typeCheckAlt falsyEnv alternative
+  outFalsyEnv <- get
+  outputEnv <- lift $ case (truthyEnv, falsyEnv) of
+    (Nothing, _) -> Right outFalsyEnv -- truthy unreachable, use falsy
+    (_, Nothing) -> Right outTruthEnv -- falsy unreachable, use truthy
+    _ -> mergeEnvs outTruthEnv outFalsyEnv branchLessEnv
+  put outputEnv
   return $ TIfExpression tok tCondition tConsequence tAlternative VoidT
+  where
+    typeCheckBody :: Maybe TypecheckEnv -> [Statement] -> Check (Maybe TStatement)
+    typeCheckBody (Just env) stmts = do
+      put env
+      Just <$> statementTypeChecker (BlockStatement stmts)
+    typeCheckBody Nothing _ = return Nothing
+
+    typeCheckAlt :: Maybe TypecheckEnv -> Maybe [Statement] -> Check (Maybe TStatement)
+    typeCheckAlt _ Nothing = return Nothing
+    typeCheckAlt env (Just stmts) = typeCheckBody env stmts
+
+    mergeEnvs :: TypecheckEnv -> TypecheckEnv -> TypecheckEnv -> Either TypeError TypecheckEnv
+    mergeEnvs truthEnv falsyEnv base = do
+      let newInTruthy = Map.difference (typeEnv truthEnv) (typeEnv base)
+          newInFalsy = Map.difference (typeEnv falsyEnv) (typeEnv base)
+          onlyInTruthy = Map.difference newInTruthy newInFalsy
+          onlyInFalsy = Map.difference newInFalsy newInTruthy
+          badVar = listToMaybe $ Map.keys onlyInTruthy ++ Map.keys onlyInFalsy
+      case badVar of
+        Nothing ->
+          Right $
+            base
+              { typeEnv =
+                  Map.union
+                    (typeEnv base)
+                    (Map.unionWith mergeTy newInTruthy newInFalsy)
+              }
+        Just var -> Left $ UndefinedVariable {localMessage = Just ("Error tests"), varName = var, pos = Nothing}
+      where
+        mergeTy t1 t2
+          | t1 == t2 = t1
+          | otherwise = UnionT (Set.fromList [t1, t2])
 typeCheck (FieldAccess tok@(Token _ pos) object fieldName) = do
   tObject <- typeCheck object
   let objType = getType tObject
@@ -302,10 +344,10 @@ statementTypeChecker (LetStatement tok (IdentifierLit identtok@(Token tType pos)
 
   case ann of
     Just annType
-      | annType /= typeExpr -> lift (Left $ TypeMismatch {expected = annType, got = typeExpr, pos = Just pos})
+      | not (isCompatible annType typeExpr) -> lift (Left $ TypeMismatch {expected = annType, got = typeExpr, pos = Just pos})
       | otherwise -> do
-          modify (insertVar name typeExpr)
-          return (TLetStatement tok (TIdentifierLit identtok name typeExpr) typedExpr typeExpr)
+          modify (insertVar name annType)
+          return (TLetStatement tok (TIdentifierLit identtok name typeExpr) typedExpr annType)
     Nothing -> do
       modify (insertVar name typeExpr)
       return (TLetStatement tok (TIdentifierLit identtok name typeExpr) typedExpr typeExpr)
@@ -320,27 +362,61 @@ statementTypeChecker (BlockStatement stmts) = do
   tStmts <- mapM statementTypeChecker stmts
   return (TBlockStatement tStmts)
 
-branchEnv :: TypecheckEnv -> TExpression -> (TypecheckEnv, TypecheckEnv)
-branchEnv = undefined
+-- branchEnv = undefined
 
 -- branchEnv initialEnv (TInfixExpression tok left NotEqual right ty)  = do
 --  let lTy =getType left
 --  let rTy = getType right
 --  if isCompatible lTy rTy || isCompatible rTy lTy
 --
--- branchEnv initialEnv (TIdentifierLit tok name ty) = do
 --
---    if canBeTruthy ty
---      then
+branchEnv :: TypecheckEnv -> TExpression -> (Maybe TypecheckEnv, Maybe TypecheckEnv)
+branchEnv initialEnv (TIdentifierLit tok name ty) = do
+  let truthTy = truthyType ty
+      falseTy = falsyType ty
+
+      truthEnv =
+        case truthTy of
+          Just t -> Just (insertVar name t initialEnv)
+          Nothing -> Nothing -- or unreachable branch
+      falseEnv =
+        case falseTy of
+          Just t -> Just (insertVar name t initialEnv)
+          Nothing -> Nothing -- or unreachable branch
+  (truthEnv, falseEnv)
+branchEnv initialEnv (TIntLit _ value _) = do
+  if value /= 0
+    then (Just initialEnv, Nothing)
+    else (Nothing, Just initialEnv)
+branchEnv initialEnv (TStringLit _ value _) = do
+  if not (null value)
+    then (Just initialEnv, Nothing)
+    else (Nothing, Just initialEnv)
+branchEnv initialEnv (TBoolLit _ value _) = do
+  if value
+    then (Just initialEnv, Nothing)
+    else (Nothing, Just initialEnv)
+branchEnv initialEnv (TNullLit _ _) = (Nothing, Just initialEnv)
+branchEnv initialEnv (TFloatLit {}) = (Just initialEnv, Nothing)
+branchEnv initialEnv (TPrefixExpression _ Bang right _) = do
+  let (truthyEnv, falsyEnv) = branchEnv initialEnv right
+  (falsyEnv, truthyEnv)
+
+--
+normalizeUnion :: Type -> Maybe Type
+normalizeUnion (UnionT set)
+  | Set.null set = Nothing
+  | otherwise = Just (UnionT set)
+normalizeUnion ty = Just ty
 
 truthyType :: Type -> Maybe Type
-truthyType (UnionT set) = Just (UnionT (Set.filter canBeTruthy set))
+truthyType (UnionT set) = normalizeUnion (UnionT (Set.filter canBeTruthy set))
 truthyType VoidT = Nothing
 truthyType NullT = Nothing
 truthyType ty = Just ty
 
 falsyType :: Type -> Maybe Type
-falsyType (UnionT set) = Just (UnionT (Set.filter canBeFalsy set))
+falsyType (UnionT set) = normalizeUnion (UnionT (Set.filter canBeFalsy set))
 falsyType ty =
   if canBeFalsy ty
     then Just ty
