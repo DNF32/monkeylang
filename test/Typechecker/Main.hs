@@ -153,6 +153,30 @@ testIfBranchingTypeNarrowing = do
         Left _ -> return () -- Expected to fail
         Right _ -> expectationFailure "Should not typecheck (always false condition)"
 
+testCallExprTyping :: Spec
+testCallExprTyping = do
+  describe "Type check call expression" $ do
+    it "Should narrow to falsy type in true branch of negation" $ do
+      let program =
+            "let x: Union[String, Int, Null] = Null; let foo = fn (x:Int, y: Union[String, Int]){return y;} foo(1,\"That\");"
+      case typeCheckerHelper program of
+        Right (TProgram _stmts, env) ->
+          case lookupVar "foo" env of
+            Just ty ->
+              ty
+                `shouldBe` FnT
+                  [IntT, UnionT (Set.fromList [IntT, StringT])]
+                  (UnionT (Set.fromList [IntT, StringT]))
+            _ -> expectationFailure "Expected TLetStatement"
+        Left err -> expectationFailure (show err)
+    it "rejects passing Union to Int param" $ do
+      let program =
+            "let x: Union[String, Int, Null] = Null; let foo = fn (x:Int, y: Union[String, Int]){return y;} foo(x,\"That\");"
+      case typeCheckerHelper program of
+        Left (TypeMismatch {expected = IntT, got = UnionT set}) -> do
+          set `shouldBe` Set.fromList [IntT, StringT, NullT]
+        other -> expectationFailure ("Expected TypeMismatch IntT, got: " ++ show other)
+
 -- helpers
 
 getLetType :: TStatement -> Maybe Types.Type

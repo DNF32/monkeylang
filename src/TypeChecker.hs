@@ -97,7 +97,7 @@ typeCheck (PrefixExpression tok@(Token _ pos) operator right) = do
   tRight <- typeCheck right
   let rightType = getType tRight
   resultType <- lift $ case (operator, rightType) of
-    (Bang, _) -> Right BoolT  -- Bang works on any type, returns Bool
+    (Bang, _) -> Right BoolT -- Bang works on any type, returns Bool
     (Minus, IntT) -> Right IntT
     (Minus, FloatT) -> Right FloatT
     (Minus, AnyT) -> Right AnyT
@@ -134,7 +134,7 @@ typeCheck (IfExpression tok condition consequence alternative) = do
   tAlternative <- typeCheckAlt falsyEnv alternative
   outFalsyEnv <- get
   outputEnv <- lift $ case alternative of
-    Nothing -> 
+    Nothing ->
       case (truthyEnv, falsyEnv) of
         (Nothing, _) -> Right outFalsyEnv -- truthy unreachable, use falsy
         _ -> Right outTruthEnv -- no else branch, use truth branch
@@ -261,6 +261,26 @@ typeCheck (FunctionLit tok params returnType body) = do
         Just ty -> return ty
         Nothing -> return AnyT
       return (TParam t n resolvedT)
+typeCheck (CallExpression tok func args) = do
+  tFunc <- typeCheck func
+  tArgs <- mapM typeCheck args
+  case getType tFunc of
+    FnT paramTypes retType
+      | length paramTypes /= length tArgs ->
+          lift $ Left $ InvalidParam {pos = Just (getPos tok)}
+      | otherwise ->
+          let mismatched =
+                [ (expected, got)
+                  | (expected, gotExpr) <- zip paramTypes tArgs,
+                    let got = getType gotExpr,
+                    not (isCompatible expected got)
+                ]
+           in case mismatched of
+                ((expected, got) : _) ->
+                  lift $ Left $ TypeMismatch {expected = expected, got = got, pos = Just (getPos tok)}
+                [] ->
+                  return (TCallExpression tok tFunc tArgs retType)
+    _ -> lift $ Left $ NotCallable {gotType = getType tFunc, pos = Just (getPos tok)}
 typeCheck _ = lift (Left $ InvalidParam Nothing)
 
 extendedTypeEnv :: [Param] -> TypecheckEnv -> TypecheckEnv
