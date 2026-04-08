@@ -38,9 +38,11 @@ isCompatible inferred annotated =
     (AnyT, _) -> True -- inferred is AnyT, accepts any annotation
     (_, AnyT) -> False -- inferred is specific, doesn't match AnyT annotation
     (UnionT setInferred, UnionT setAnnotated) ->
-      Set.isSubsetOf setAnnotated setInferred
-    (UnionT setInferred, _) ->
-      Set.member annotated setInferred
+      Set.isSubsetOf setInferred setAnnotated
+    (t, UnionT setAnnotated) ->
+      Set.member t setAnnotated
+    (UnionT setInferred, t) ->
+      Set.member t setInferred && Set.size setInferred == 1
     (t1, t2) -> t1 == t2 -- otherwise exact match
 
 intersect :: Type -> Type -> Bool
@@ -70,6 +72,26 @@ intersectType t1 t2 =
       if Set.member t s then Just t else Nothing
     (t1', t2') ->
       if t1' == t2' then Just t1' else Nothing
+
+subtractType :: Type -> Type -> Maybe Type
+subtractType t1 t2 =
+  case (t1, t2) of
+    (AnyT, _) -> Just AnyT
+    (_, AnyT) -> Nothing
+    (UnionT s1, UnionT s2) ->
+      let s = Set.difference s1 s2
+       in if Set.null s then Nothing else Just (UnionT s)
+    (UnionT s, t) ->
+      let s' = Set.delete t s
+       in if Set.null s' then Nothing else Just (UnionT s')
+    (t, UnionT s) ->
+      if Set.member t s then Nothing else Just t
+    (t1', t2') ->
+      if t1' == t2' then Nothing else Just t1'
+
+diffTypes :: Type -> Type -> (Maybe Type, Maybe Type)
+diffTypes t1 t2 =
+  (subtractType t1 t2, subtractType t2 t1)
 
 -- Check if a type is optional (can be Null)
 isOptional :: Type -> Bool
@@ -117,7 +139,8 @@ withPos p err = err {pos = Just p}
 data TypecheckEnv = TypecheckEnv
   { typeEnv :: TypeEnv,
     typeDefs :: TypeDefs,
-    currentRetTy :: [Type]
+    currentRetTy :: [Type],
+    fieldEnv :: Map.Map (String, String) Type
   }
   deriving (Show)
 
@@ -136,7 +159,7 @@ peekRetTy env =
     (t : _) -> Just t
 
 emptyEnv :: TypecheckEnv
-emptyEnv = TypecheckEnv Map.empty Map.empty []
+emptyEnv = TypecheckEnv Map.empty Map.empty [] Map.empty
 
 lookupVar :: String -> TypecheckEnv -> Maybe Type
 lookupVar name env = Map.lookup name (typeEnv env)
@@ -148,6 +171,18 @@ lookupFieldType :: StructName -> FieldName -> TypecheckEnv -> Maybe Type
 lookupFieldType structName fieldName env = do
   fieldTypes <- lookupStruct structName env
   Map.lookup fieldName fieldTypes
+
+lookupFieldRefinement :: String -> String -> TypecheckEnv -> Maybe Type
+lookupFieldRefinement var field env =
+  Map.lookup (var, field) (fieldEnv env)
+
+insertFieldRefinement :: String -> String -> Type -> TypecheckEnv -> TypecheckEnv
+insertFieldRefinement var field ty env =
+  env {fieldEnv = Map.insert (var, field) ty (fieldEnv env)}
+
+clearFieldRefinements :: String -> TypecheckEnv -> TypecheckEnv
+clearFieldRefinements var env =
+  env {fieldEnv = Map.filterWithKey (\(v, _) _ -> v /= var) (fieldEnv env)}
 
 insertVar :: String -> Type -> TypecheckEnv -> TypecheckEnv
 insertVar name t env = env {typeEnv = Map.insert name t (typeEnv env)}

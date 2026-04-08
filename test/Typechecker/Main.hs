@@ -142,6 +142,24 @@ testIfBranchingTypeNarrowing = do
             Just ty -> ty `shouldBe` IntT
             _ -> expectationFailure "Expected TLetStatement"
         Left err -> expectationFailure (show err)
+    it "narrowing allows branch-typed lets for null check" $ do
+      let program =
+            "let x: Union[Int, Null] = Null; if (x==Null) { let y: Null = x; } else { let y: Int = x; }"
+      case typeCheckerHelper program of
+        Right _ -> pure ()
+        Left err -> expectationFailure (show err)
+    it "Should narrow null conditions" $ do
+      let program = "let x: Union[Int, Null] = Null; if (x==Null) { let y = x}else{ let y = x;}"
+      case typeCheckerHelper program of
+        Right (TProgram stmts, env) -> do
+          print env
+          case lookupVar "y" env of
+            Just ty -> ty `shouldBe` NullT
+            _ -> expectationFailure "Expected TLetStatement"
+          case lookupVar "z" env of
+            Just ty -> ty `shouldBe` UnionT (Set.fromList [IntT, NullT])
+            _ -> expectationFailure "Expected TLetStatement"
+        Left err -> expectationFailure (show err)
     it "Should not narrow if condition is always true" $ do
       let program = "let x: Int = 5; if (x) { let y = 10; }"
       case typeCheckerHelper program of

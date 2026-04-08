@@ -8,6 +8,7 @@ import Control.Monad.State (MonadState (get), StateT, gets, lift, modify, put)
 import Data.Map qualified as Map
 import Data.Maybe (fromJust, fromMaybe, listToMaybe)
 import Data.Set qualified as Set
+import GHC.ExecutionStack (Location (objectName))
 import Token (Position, Token (..), TokenType (..), getPos)
 import Types
 
@@ -174,9 +175,15 @@ typeCheck (IfExpression tok condition consequence alternative) = do
               }
         Just var -> Left $ UndefinedVariable {localMessage = Just ("Error tests"), varName = var, pos = Nothing}
       where
-        mergeTy t1 t2
-          | t1 == t2 = t1
-          | otherwise = UnionT (Set.fromList [t1, t2])
+        mergeTy t1 t2 =
+          let s1 = typeToSet t1
+              s2 = typeToSet t2
+              merged = Set.union s1 s2
+           in if Set.size merged == 1
+                then Set.findMin merged
+                else UnionT merged
+        typeToSet (UnionT s) = s
+        typeToSet t = Set.singleton t
 typeCheck (FieldAccess tok@(Token _ pos) object fieldName) = do
   tObject <- typeCheck object
   let objType = getType tObject
@@ -184,7 +191,14 @@ typeCheck (FieldAccess tok@(Token _ pos) object fieldName) = do
     (StructT structName) -> do
       fieldTy <- gets (lookupFieldType structName fieldName)
       case fieldTy of
-        Just ty -> return $ TFieldAccess tok tObject fieldName ty
+        Just ty -> do
+          let refinedTy = case object of
+                IdentifierLit _ varName ->
+                  gets (lookupFieldRefinement varName fieldName)
+                _ ->
+                  pure Nothing
+          finalTy <- refinedTy
+          return $ TFieldAccess tok tObject fieldName (fromMaybe ty finalTy)
         Nothing ->
           lift $
             Left $
@@ -344,10 +358,11 @@ typeCheckArith op l r = mkOpError op l r
 typeCheckEquality :: Type -> Type -> Either TypeError Type
 typeCheckEquality AnyT _ = Right BoolT
 typeCheckEquality _ AnyT = Right BoolT
--- Strict equality: types must match exactly (or be compatible via AnyT handled above)
-typeCheckEquality t1 t2
-  | t1 == t2 = Right BoolT
-  | otherwise = mkMismatch t1 t2 Nothing
+-- Equality is allowed when types overlap
+typeCheckEquality t1 t2 =
+  case intersectType t1 t2 of
+    Just _ -> Right BoolT
+    Nothing -> mkMismatch t1 t2 Nothing
 
 typeCheckComparison :: String -> Type -> Type -> Either TypeError Type
 typeCheckComparison op IntT IntT = Right BoolT
@@ -369,10 +384,10 @@ statementTypeChecker (LetStatement tok (IdentifierLit identtok@(Token tType pos)
 
   case ann of
     Just annType
-      | not (isCompatible annType typeExpr) -> lift (Left $ TypeMismatch {expected = annType, got = typeExpr, pos = Just pos})
+      | not (isCompatible typeExpr annType) -> lift (Left $ TypeMismatch {expected = annType, got = typeExpr, pos = Just pos})
       | otherwise -> do
           modify (insertVar name annType)
-          return (TLetStatement tok (TIdentifierLit identtok name typeExpr) typedExpr annType)
+          return (TLetStatement tok (TIdentifierLit identtok name annType) typedExpr annType)
     Nothing -> do
       modify (insertVar name typeExpr)
       return (TLetStatement tok (TIdentifierLit identtok name typeExpr) typedExpr typeExpr)
@@ -426,23 +441,49 @@ branchEnv initialEnv (TFloatLit {}) = (Just initialEnv, Nothing)
 branchEnv initialEnv (TPrefixExpression _ Bang right _) = do
   let (truthyEnv, falsyEnv) = branchEnv initialEnv right
   (falsyEnv, truthyEnv)
-branchEnv initialEnv (TInfixExpression tok left Equal right ty) = do
-  let leftTy = getType left
-  let rightTy = getType right
+branchEnv initialEnv (TInfixExpression _ left Equal right _) =
+  case (left, right) of
+    (TIdentifierLit _ _ lTy, TNullLit _ _) ->
+      let truthEnv = Just (narrowEnv initialEnv left NullT)
+          falsyEnv = case removeNullType lTy of
+            Just narrowed -> Just (narrowEnv initialEnv left narrowed)
+            Nothing -> Nothing
+       in (truthEnv, falsyEnv)
+    (TNullLit _ _, TIdentifierLit _ _ rTy) ->
+      let truthEnv = Just (narrowEnv initialEnv right NullT)
+          falsyEnv = case removeNullType rTy of
+            Just narrowed -> Just (narrowEnv initialEnv right narrowed)
+            Nothing -> Nothing
+       in (truthEnv, falsyEnv)
+    _ ->
+      case intersectType (getType left) (getType right) of
+        Nothing ->
+          (Nothing, Just initialEnv) -- true branch unreachable
+        Just narrowTy ->
+          let truthEnv = narrowEnv (narrowEnv initialEnv left narrowTy) right narrowTy
+           in (Just truthEnv, Just initialEnv)
+branchEnv env (TInfixExpression _ left NotEqual right _) =
+  case intersectType (getType left) (getType right) of
+    Nothing -> (Just env, Nothing) -- always true
+    Just _ -> (Just env, Just env) -- no narrowing
 
-  case intersectType leftTy rightTy of
-    Nothing -> (Nothing, Just initialEnv)
-    Just narrowTy -> case 
-  where
-    narrow:: TExpression -> Type -> TExpression
-    narrow expr narrowTy = case expr of
-      TIdentifierLit tok name _ ->
-        TIdentifierLit tok name narrowTy
-      TFieldAccess tok obj fieldName _ ->
-        TFieldAccess tok obj fieldName narrowTy
-      _ ->
-        expr
+narrowEnv :: TypecheckEnv -> TExpression -> Type -> TypecheckEnv
+narrowEnv env expr narrowTy = case expr of
+  TIdentifierLit _ name _ ->
+    insertVar name narrowTy env
+  TFieldAccess _ (TIdentifierLit _ objectName _) fieldName _ ->
+    insertFieldRefinement objectName fieldName narrowTy env
+  _ ->
+    env
 
+removeNullType :: Type -> Maybe Type
+removeNullType NullT = Nothing
+removeNullType (UnionT s) =
+  let s' = Set.delete NullT s
+   in if Set.null s' then Nothing else Just (UnionT s')
+removeNullType t = Just t
+
+--
 --
 normalizeUnion :: Type -> Maybe Type
 normalizeUnion (UnionT set)
