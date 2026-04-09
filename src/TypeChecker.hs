@@ -127,63 +127,83 @@ typeCheck (InfixExpression tok@(Token _ pos) left operator right) = do
     updatePos (Right t) = Right t
 typeCheck (IfExpression tok condition consequence alternative) = do
   tCondition <- typeCheck condition
-  branchLessEnv <- get
-  let (truthyEnv, falsyEnv) = branchEnv branchLessEnv tCondition
-  tConsequence <- typeCheckBody truthyEnv consequence
-  outTruthEnv <- get
-  put branchLessEnv
-  tAlternative <- typeCheckAlt falsyEnv alternative
-  outFalsyEnv <- get
-  outputEnv <- lift $ case alternative of
-    Nothing ->
-      case (truthyEnv, falsyEnv) of
-        (Nothing, _) -> Right outFalsyEnv -- truthy unreachable, use falsy
-        _ -> Right outTruthEnv -- no else branch, use truth branch
-    Just _ ->
-      case (truthyEnv, falsyEnv) of
-        (Nothing, _) -> Right outFalsyEnv -- truthy unreachable, use falsy
-        (_, Nothing) -> Right outTruthEnv -- falsy unreachable, use truthy
-        _ -> mergeEnvs outTruthEnv outFalsyEnv branchLessEnv
-  put outputEnv
-  return $ TIfExpression tok tCondition tConsequence tAlternative VoidT
-  where
-    typeCheckBody :: Maybe TypecheckEnv -> [Statement] -> Check (Maybe TStatement)
-    typeCheckBody (Just env) stmts = do
-      put env
-      Just <$> statementTypeChecker (BlockStatement stmts)
-    typeCheckBody Nothing _ = return Nothing
-
-    typeCheckAlt :: Maybe TypecheckEnv -> Maybe [Statement] -> Check (Maybe TStatement)
-    typeCheckAlt _ Nothing = return Nothing
-    typeCheckAlt env (Just stmts) = typeCheckBody env stmts
-
-    mergeEnvs :: TypecheckEnv -> TypecheckEnv -> TypecheckEnv -> Either TypeError TypecheckEnv
-    mergeEnvs truthEnv falsyEnv base = do
-      let newInTruthy = Map.difference (typeEnv truthEnv) (typeEnv base)
-          newInFalsy = Map.difference (typeEnv falsyEnv) (typeEnv base)
-          onlyInTruthy = Map.difference newInTruthy newInFalsy
-          onlyInFalsy = Map.difference newInFalsy newInTruthy
-          badVar = listToMaybe $ Map.keys onlyInTruthy ++ Map.keys onlyInFalsy
-      case badVar of
-        Nothing ->
-          Right $
-            base
-              { typeEnv =
-                  Map.union
-                    (typeEnv base)
-                    (Map.unionWith mergeTy newInTruthy newInFalsy)
-              }
-        Just var -> Left $ UndefinedVariable {localMessage = Just ("Error tests"), varName = var, pos = Nothing}
-      where
-        mergeTy t1 t2 =
-          let s1 = typeToSet t1
-              s2 = typeToSet t2
-              merged = Set.union s1 s2
-           in if Set.size merged == 1
-                then Set.findMin merged
-                else UnionT merged
-        typeToSet (UnionT s) = s
-        typeToSet t = Set.singleton t
+  baseEnv <- get
+  let (truthyEnv, falsyEnv) = branchEnv baseEnv tCondition
+  truthNode <- nodeFromData truthyEnv consequence
+  put baseEnv
+  falsyNode <- case alternative of
+    Nothing -> pure Unreachable
+    Just stmts -> nodeFromData falsyEnv stmts
+  case (truthNode, falsyNode) of
+    (Unreachable, Unreachable) ->
+      lift $ Left $ InternalError {message = "If condition has no reachable branches", pos = Just (getPos tok)}
+    (BranchNode tStmt truthEnv exprTy retTy, Unreachable) -> do
+      let exprTy = if simplifyRetTy (truthRet ++ [NullT])
+      put truthEnv
+      return $ TIfExpression tok tCondition (Just tStmt) Nothing exprTy
+    (Unreachable, BranchNode tStmt falseEnv falseRet) -> do
+      let exprTy = simplifyRetTy falseRe
+      return $ TIfExpression tok tCondition Nothing (Just tStmt) exprTy
+    (BranchNode tStmt truthEnv truthRet, BranchNode fStmt falseEnv falseRet) -> do
+      mergedEnv <- lift $ mergeEnvs truthEnv falseEnv baseEnv
+      put mergedEnv
+      let exprTy = simplifyRetTy (truthRet ++ falseRet)
+      return $ TIfExpression tok tCondition (Just tStmt) (Just fStmt) exprTy
+--  outputEnv <- lift $ case (tConsequence ,tAlternative) of
+--    (Nothing, Nothing)->
+--    (tConsequence , Nothing) -> if truthHasReturn
+--    Nothing -> Right outFalsyEnv
+--    Just _ ->
+--      case (truthyEnv, falsyEnv) of
+--        (Nothing, _) -> Right outFalsyEnv -- truthy unreachable, use falsy
+--        (_, Nothing) -> Right outTruthEnv -- falsy unreachable, use truthy
+--        _ -> mergeEnvs outTruthEnv outFalsyEnv branchLessEnv
+--  put (outputEnv {currentRetTy = truthyNewRetTy ++ falsyNewRetTy ++ baseRetTy})
+--  return $ TIfExpression tok tCondition tConsequence tAlternative exprTy
+--  where
+--    controlFlow :: Maybe TStatement  -> Maybe TStatement -> Maybe
+--    node
+--    typeCheckBody :: Maybe TypecheckEnv -> [Statement] -> Check (Maybe TStatement, [Type])
+--    typeCheckBody (Just env) stmts = do
+--      put env
+--      (typedStmt, ty) <- inferBlockReturnType stmts
+--      return (typedStmt, ty)
+--    typeCheckBody Nothing _ = return (Nothing, [])
+--
+--    typeCheckAlt :: Maybe TypecheckEnv -> Maybe [Statement] -> Check (Maybe TStatement, [Type])
+--    typeCheckAlt _ Nothing = return (Nothing, [])
+--    typeCheckAlt env (Just stmts) = typeCheckBody env stmts
+--
+--    takeNewReturns :: [Type] -> [Type] -> [Type]
+--    takeNewReturns base current = take (length current - length base) current
+--
+--    mergeEnvs :: TypecheckEnv -> TypecheckEnv -> TypecheckEnv -> Either TypeError TypecheckEnv
+--    mergeEnvs truthEnv falsyEnv base = do
+--      let baseScope = case typeEnv base of
+--            (scope : _) -> scope
+--            [] -> Map.empty
+--          truthScope = case typeEnv truthEnv of
+--            (scope : _) -> scope
+--            [] -> Map.empty
+--          falsyScope = case typeEnv falsyEnv of
+--            (scope : _) -> scope
+--            [] -> Map.empty
+--          baseKeys = Map.keysSet baseScope
+--          truthExisting = Map.restrictKeys truthScope baseKeys
+--          falsyExisting = Map.restrictKeys falsyScope baseKeys
+--          mergedExisting = Map.intersectionWith mergeTy truthExisting falsyExisting
+--          updatedBase = Map.union baseScope mergedExisting
+--      Right $ base {typeEnv = updatedBase : drop 1 (typeEnv base)}
+--      where
+--        mergeTy t1 t2 =
+--          let s1 = typeToSet t1
+--              s2 = typeToSet t2
+--              merged = Set.union s1 s2
+--           in if Set.size merged == 1
+--                then Set.findMin merged
+--                else UnionT merged
+--        typeToSet (UnionT s) = s
+--        typeToSet t = Set.singleton t
 typeCheck (FieldAccess tok@(Token _ pos) object fieldName) = do
   tObject <- typeCheck object
   let objType = getType tObject
@@ -226,7 +246,7 @@ typeCheck (StructInitialization tok sName fieldInits) = do
       fieldTy <- gets (lookupFieldType sName fname)
       case fieldTy of
         Just ty
-          | isCompatible ty foundTy -> return (TFieldInit tok fname tExpr ty)
+          | isCompatible foundTy ty -> return (TFieldInit tok fname tExpr ty)
           | otherwise ->
               lift $
                 Left $
@@ -302,7 +322,7 @@ extendedTypeEnv params env =
   foldl go env params
   where
     go :: TypecheckEnv -> Param -> TypecheckEnv
-    go env (Param _ name maybeType) = insertVar name (fromMaybe AnyT maybeType) env
+    go env (Param _ name maybeType) = defineVar name (fromMaybe AnyT maybeType) env
 
 mkMismatch :: Type -> Type -> Maybe Position -> Either TypeError Type
 mkMismatch l r p = Left $ TypeMismatch {expected = l, got = r, pos = p}
@@ -386,10 +406,10 @@ statementTypeChecker (LetStatement tok (IdentifierLit identtok@(Token tType pos)
     Just annType
       | not (isCompatible typeExpr annType) -> lift (Left $ TypeMismatch {expected = annType, got = typeExpr, pos = Just pos})
       | otherwise -> do
-          modify (insertVar name annType)
+          modify (defineVar name annType)
           return (TLetStatement tok (TIdentifierLit identtok name annType) typedExpr annType)
     Nothing -> do
-      modify (insertVar name typeExpr)
+      modify (defineVar name typeExpr)
       return (TLetStatement tok (TIdentifierLit identtok name typeExpr) typedExpr typeExpr)
 statementTypeChecker (ReturnStatement tok expr) = do
   typedExpr <- typeCheck expr
@@ -399,8 +419,17 @@ statementTypeChecker (ExpressionStatement tok expr) = do
   typedExpr <- typeCheck expr
   return (TExpressionStatement tok typedExpr)
 statementTypeChecker (BlockStatement stmts) = do
-  tStmts <- mapM statementTypeChecker stmts
+  modify pushScope
+  tStmts <- go stmts
+  modify popScope
   return (TBlockStatement tStmts)
+  where
+    go [] = pure []
+    go (s : ss) = do
+      t <- statementTypeChecker s
+      case t of
+        TReturnStatement {} -> pure [t]
+        _ -> (t :) <$> go ss
 
 -- branchEnv = undefined
 
@@ -417,11 +446,11 @@ branchEnv initialEnv (TIdentifierLit tok name ty) = do
 
       truthEnv =
         case truthTy of
-          Just t -> Just (insertVar name t initialEnv)
+          Just t -> Just (updateVar name t initialEnv)
           Nothing -> Nothing -- or unreachable branch
       falseEnv =
         case falseTy of
-          Just t -> Just (insertVar name t initialEnv)
+          Just t -> Just (updateVar name t initialEnv)
           Nothing -> Nothing -- or unreachable branch
   (truthEnv, falseEnv)
 branchEnv initialEnv (TIntLit _ value _) = do
@@ -467,10 +496,20 @@ branchEnv env (TInfixExpression _ left NotEqual right _) =
     Nothing -> (Just env, Nothing) -- always true
     Just _ -> (Just env, Just env) -- no narrowing
 
+inferBlockReturnType :: [Statement] -> Check (TStatement, [Type])
+inferBlockReturnType stmts = do
+  typed <- mapM statementTypeChecker stmts
+  let lastTy = case reverse typed of
+        (TReturnStatement _ tExpr : _) -> [getType tExpr]
+        (TExpressionStatement _ tExpr : _) -> [getType tExpr]
+        _ -> []
+      typedStmt = TBlockStatement typed
+  return (typedStmt, lastTy)
+
 narrowEnv :: TypecheckEnv -> TExpression -> Type -> TypecheckEnv
 narrowEnv env expr narrowTy = case expr of
   TIdentifierLit _ name _ ->
-    insertVar name narrowTy env
+    updateVar name narrowTy env
   TFieldAccess _ (TIdentifierLit _ objectName _) fieldName _ ->
     insertFieldRefinement objectName fieldName narrowTy env
   _ ->
@@ -503,6 +542,32 @@ falsyType ty =
   if canBeFalsy ty
     then Just ty
     else Nothing
+
+data BranchNode
+  = BranchNode
+      { nodeStmt :: TStatement,
+        nodeEnv :: TypecheckEnv,
+        nodeExprTy :: Maybe Type,
+        nodeHasTy :: Maybe Type
+      }
+  | Unreachable
+  deriving (Eq, Show)
+
+nodeFromData :: Maybe TypecheckEnv -> [Statement] -> Check BranchNode
+nodeFromData Nothing _ = pure Unreachable
+nodeFromData (Just env) stmts = do
+  put env
+  tBlock@(TBlockStatement typed) <- statementTypeChecker (BlockStatement stmts)
+  newEnv <- get
+  let (exprTy, retTy) = blockExprInfo typed
+  pure (BranchNode tBlock newEnv exprTy retTy)
+
+blockExprInfo :: [TStatement] -> (Maybe Type, Maybe Type)
+blockExprInfo typed =
+  case reverse typed of
+    (TReturnStatement _ tExpr : _) -> (Nothing, (Just $ getType tExpr))
+    (TExpressionStatement _ tExpr : _) -> ((Just $ getType tExpr), Nothing)
+    _ -> ([], False)
 
 canBeTruthy :: Type -> Bool
 canBeTruthy NullT = False -- Null is always falsy

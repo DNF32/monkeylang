@@ -166,7 +166,7 @@ evalBlockStatement [s] = case s of
     case obj of
       ReturnObj _ -> return obj
       ErrorObj _ -> return obj
-      _ -> return voidObj
+      _ -> return obj
   _ -> return voidObj
 evalBlockStatement (s1 : ss) = do
   case s1 of

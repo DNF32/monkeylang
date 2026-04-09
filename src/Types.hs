@@ -23,6 +23,15 @@ data Type
   | AnyT
   deriving (Show, Eq, Ord)
 
+newtype RetTypes = RetTypes {unRetTypes :: [Type]}
+  deriving (Show, Eq)
+
+instance Semigroup RetTypes where
+  RetTypes a <> RetTypes b = RetTypes (a <> b)
+
+instance Monoid RetTypes where
+  mempty = RetTypes []
+
 simplifyRetTy :: [Type] -> Type
 simplifyRetTy ts =
   let s = Set.fromList ts
@@ -127,6 +136,7 @@ data TypeError
   | InternalError {message :: String, pos :: Maybe Position}
   | UndefinedStruct {undefinedName :: String, pos :: Maybe Position}
   | UndefinedField {structName :: String, undefinedFieldName :: String, pos :: Maybe Position}
+  | UnreachableNode {message :: String, pos :: Maybe Position}
   deriving (Show, Eq)
 
 withPos :: Position -> TypeError -> TypeError
@@ -137,7 +147,7 @@ withPos p err = err {pos = Just p}
 -- ============================================================
 
 data TypecheckEnv = TypecheckEnv
-  { typeEnv :: TypeEnv,
+  { typeEnv :: [TypeEnv],
     typeDefs :: TypeDefs,
     currentRetTy :: [Type],
     fieldEnv :: Map.Map (String, String) Type
@@ -159,10 +169,16 @@ peekRetTy env =
     (t : _) -> Just t
 
 emptyEnv :: TypecheckEnv
-emptyEnv = TypecheckEnv Map.empty Map.empty [] Map.empty
+emptyEnv = TypecheckEnv [Map.empty] Map.empty [] Map.empty
 
 lookupVar :: String -> TypecheckEnv -> Maybe Type
-lookupVar name env = Map.lookup name (typeEnv env)
+lookupVar name env = go (typeEnv env)
+  where
+    go [] = Nothing
+    go (scope : rest) =
+      case Map.lookup name scope of
+        Just ty -> Just ty
+        Nothing -> go rest
 
 lookupStruct :: StructName -> TypecheckEnv -> Maybe StructDef
 lookupStruct name env = Map.lookup name (typeDefs env)
@@ -184,8 +200,28 @@ clearFieldRefinements :: String -> TypecheckEnv -> TypecheckEnv
 clearFieldRefinements var env =
   env {fieldEnv = Map.filterWithKey (\(v, _) _ -> v /= var) (fieldEnv env)}
 
-insertVar :: String -> Type -> TypecheckEnv -> TypecheckEnv
-insertVar name t env = env {typeEnv = Map.insert name t (typeEnv env)}
+defineVar :: String -> Type -> TypecheckEnv -> TypecheckEnv
+defineVar name t env =
+  case typeEnv env of
+    [] -> env {typeEnv = [Map.singleton name t]}
+    (scope : rest) -> env {typeEnv = Map.insert name t scope : rest}
+
+updateVar :: String -> Type -> TypecheckEnv -> TypecheckEnv
+updateVar name t env = env {typeEnv = go (typeEnv env)}
+  where
+    go [] = [Map.singleton name t]
+    go (scope : rest)
+      | Map.member name scope = Map.insert name t scope : rest
+      | otherwise = scope : go rest
+
+pushScope :: TypecheckEnv -> TypecheckEnv
+pushScope env = env {typeEnv = Map.empty : typeEnv env}
+
+popScope :: TypecheckEnv -> TypecheckEnv
+popScope env =
+  case typeEnv env of
+    [] -> env
+    (_ : rest) -> env {typeEnv = rest}
 
 data Rule
 
