@@ -132,11 +132,35 @@ testIfBranchingTypeNarrowing = do
         Right _ -> pure ()
         Left err -> expectationFailure (show err)
     it "Should narrow null conditions" $ do
-      let program = "let x: Union[Int, Null] = Null; let y = if (x==Null) { x } else { 10 }"
+      let program = "let x: Union[Int, Null] = Null; let y = if (x!=Null) { x } else { 10 }"
       case typeCheckerHelper program of
         Right (TProgram _stmts, env) ->
           case lookupVar "y" env of
-            Just ty -> ty `shouldBe` UnionT (Set.fromList [IntT, NullT])
+            Just ty -> ty `shouldBe` IntT
+            _ -> expectationFailure ("Expected y to have union type, got: " ++ show (lookupVar "y" env))
+        Left err -> expectationFailure (show err)
+    it "Should narrow for isInt" $ do
+      let program = "let x: Union[Int, Null] = Null; let y = if (isInt(x)) { x } else { 10 }"
+      case typeCheckerHelper program of
+        Right (TProgram _stmts, env) ->
+          case lookupVar "y" env of
+            Just ty -> ty `shouldBe` IntT
+            _ -> expectationFailure ("Expected y to have union type, got: " ++ show (lookupVar "y" env))
+        Left err -> expectationFailure (show err)
+    it "Should narrow for isString" $ do
+      let program = "let x: Union[String, Null] = Null; let y = if (isString(x)) { x } else { \"hello\" }"
+      case typeCheckerHelper program of
+        Right (TProgram _stmts, env) ->
+          case lookupVar "y" env of
+            Just ty -> ty `shouldBe` StringT
+            _ -> expectationFailure ("Expected y to have union type, got: " ++ show (lookupVar "y" env))
+        Left err -> expectationFailure (show err)
+    it "Impossible to narrow for isString and isInt" $ do
+      let program = "let x: Union[String, Int,Null] = Null; let y = if (isString(x) && isInt(x)) { x } else { \"hello\" }"
+      case typeCheckerHelper program of
+        Right (TProgram _stmts, env) ->
+          case lookupVar "y" env of
+            Just ty -> ty `shouldBe` StringT
             _ -> expectationFailure ("Expected y to have union type, got: " ++ show (lookupVar "y" env))
         Left err -> expectationFailure (show err)
     it "Should error if condition is always false" $ do

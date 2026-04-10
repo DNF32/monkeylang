@@ -400,8 +400,7 @@ parseNative = do
         (BoolType, BoolT),
         (FloatType, FloatT), -- need FloatT in your Type!
         (VoidType, VoidT),
-        (Null, NullT),
-        (AnyType, AnyT)
+        (Null, NullT)
       ]
     toParser (tokenT, t) = t <$ isToken tokenT
 

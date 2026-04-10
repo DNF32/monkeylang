@@ -63,7 +63,6 @@ data TokenType
   | FloatType
   | VoidType
   | StructType
-  | AnyType
   | Pipe
   | And
   | Or
@@ -258,8 +257,7 @@ keywords =
     ("Float", FloatType),
     ("Void", VoidType), -- missing!
     ("Union", Union),
-    ("Struct", StructType),
-    ("Any", AnyType)
+    ("Struct", StructType)
   ]
 
 lookupIdent :: String -> TokenType

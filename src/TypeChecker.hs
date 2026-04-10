@@ -6,7 +6,7 @@ module TypeChecker where
 import Ast (Expression (..), FieldDecl (FieldDecl, fieldName), FieldInitialization (FieldInit), Param (..), Statement (..), TExpression (..), TFieldInitialization (TFieldInit), TParam (..), TStatement (..), getType)
 import Control.Monad.State (MonadState (get), StateT, gets, lift, modify, put)
 import Data.Map qualified as Map
-import Data.Maybe (fromJust, fromMaybe, listToMaybe)
+import Data.Maybe (fromMaybe)
 import Data.Set qualified as Set
 import GHC.ExecutionStack (Location (objectName))
 import Token (Position, Token (..), TokenType (..), getPos)
@@ -74,15 +74,6 @@ checkNoProblematicCycles structName structDef = do
 
 type Check a = StateT TypecheckEnv (Either TypeError) a
 
--- typecheck :: TypecheckEnv -> Expression -> Either TypeError TExpression
--- typecheck env expr = case expr of
---  IntLit tok v -> Right $ TIntLit tok v IntT
---  FloatLit tok v -> Right $ TFloatLit tok v FloatT
---  StringLit tok v -> Right $ TStringLit tok v StringT
---  BooleanLit tok v -> Right $ TBoolLit tok v BoolT
---  NullLit tok -> Right $ TNullLit tok NullT
---  _ -> Left $ TypeMismatch AnyT AnyT -- todo
-
 typeCheck :: Expression -> Check TExpression
 typeCheck (IntLit tok v) = return (TIntLit tok v IntT)
 typeCheck (FloatLit tok v) = return (TFloatLit tok v FloatT)
@@ -97,12 +88,12 @@ typeCheck (IdentifierLit tok name) = do
 typeCheck (PrefixExpression tok@(Token _ pos) operator right) = do
   tRight <- typeCheck right
   let rightType = getType tRight
+  let numericType = UnionT (Set.fromList [IntT, FloatT])
   resultType <- lift $ case (operator, rightType) of
     (Bang, _) -> Right BoolT -- Bang works on any type, returns Bool
     (Minus, IntT) -> Right IntT
     (Minus, FloatT) -> Right FloatT
-    (Minus, AnyT) -> Right AnyT
-    _ -> Left $ TypeMismatch {expected = AnyT, got = rightType, pos = Just pos}
+    _ -> Left $ TypeMismatch {expected = numericType, got = rightType, pos = Just pos}
   return $ TPrefixExpression tok operator tRight resultType
 typeCheck (InfixExpression tok@(Token _ pos) left operator right) = do
   leftSide <- typeCheck left
@@ -119,7 +110,9 @@ typeCheck (InfixExpression tok@(Token _ pos) left operator right) = do
     NotEqual -> updatePos $ typeCheckEquality leftType rightType
     LessThan -> updatePos $ typeCheckComparison opStr leftType rightType
     GreaterThan -> updatePos $ typeCheckComparison opStr leftType rightType
-    _ -> Right AnyT
+    And -> updatePos $ typeCheckLogical leftType rightType
+    Or -> updatePos $ typeCheckLogical leftType rightType
+    _ -> Left $ InternalError {message = "Unhandled infix operator: " ++ show operator, pos = Just pos}
   return $ TInfixExpression tok leftSide operator rightSide typeOfInfixNode
   where
     updatePos :: Either TypeError Type -> Either TypeError Type
@@ -139,23 +132,51 @@ typeCheck (IfExpression tok condition consequence alternative) = do
       lift $ Left $ InternalError {message = "If condition has no reachable branches", pos = Just (getPos tok)}
     (BranchNode tStmt truthEnv nodeType, Unreachable) -> do
       let ifExprTy = simplifyRetTy $ (: []) $ case nodeType of
-            Expr ty -> UnionT (Set.fromList [ty, NullT])
-            Ret _ -> VoidT
+            Expr ty -> ty
+            Ret _ -> NeverT
+            Void -> VoidT
       put truthEnv
       return $ TIfExpression tok tCondition (Just tStmt) Nothing ifExprTy
     (Unreachable, BranchNode tStmt falseEnv nodeType) -> do
       let ifExprTy = simplifyRetTy $ (: []) $ case nodeType of
-            Expr ty -> UnionT (Set.fromList [ty, NullT])
-            Ret _ -> VoidT
+            Expr ty -> ty
+            Ret _ -> NeverT
+            Void -> VoidT
       put falseEnv
       return $ TIfExpression tok tCondition Nothing (Just tStmt) ifExprTy
     (BranchNode tConsequence truthEnv truthNodeType, BranchNode tAlternative falseEnv falseNodeType) -> do
       put baseEnv
-      let ifExprTy = simplifyRetTy $ (: []) $ case (truthNodeType, falseNodeType) of
-            (Ret _, Ret _) -> VoidT
-            (Expr ty, Ret _) -> UnionT (Set.fromList [ty, NullT])
-            (Ret _, Expr ty) -> UnionT (Set.fromList [ty, NullT])
-            (Expr ty1, Expr ty2) -> UnionT (Set.fromList [ty1, ty2])
+      ifExprTy <-
+        simplifyRetTy . (: [])
+          <$> ( case (truthNodeType, falseNodeType) of
+                  -- both branches return: if-expression never produces a value
+                  (Ret _, Ret _) ->
+                    return NeverT
+                  -- one branch returns, the other yields a value
+                  (Expr ty, Ret _) ->
+                    return ty
+                  (Ret _, Expr ty) ->
+                    return ty
+                  -- one branch returns, the other yields unit
+                  (Void, Ret _) ->
+                    return VoidT
+                  (Ret _, Void) ->
+                    return VoidT
+                  -- both branches yield values: must match
+                  (Expr ty1, Expr ty2)
+                    | ty1 == ty2 ->
+                        return ty1
+                    | otherwise ->
+                        lift $ Left $ TypeMismatch {expected = ty1, got = ty2, pos = Just (getPos tok)}
+                  -- both branches yield unit
+                  (Void, Void) ->
+                    return VoidT
+                  -- mixed value/unit is a type error (Rust-like)
+                  (Expr ty, Void) ->
+                    lift $ Left $ TypeMismatch {expected = ty, got = VoidT, pos = Just (getPos tok)}
+                  (Void, Expr ty) ->
+                    lift $ Left $ TypeMismatch {expected = VoidT, got = ty, pos = Just (getPos tok)}
+              )
       return $ TIfExpression tok tCondition (Just tConsequence) (Just tAlternative) ifExprTy
 --  outputEnv <- lift $ case (tConsequence ,tAlternative) of
 --    (Nothing, Nothing)->
@@ -239,7 +260,7 @@ typeCheck (FieldAccess tok@(Token _ pos) object fieldName) = do
       lift $
         Left $
           TypeMismatch
-            { expected = AnyT,
+            { expected = StructT "<struct>",
               got = objType,
               pos = Just pos
             }
@@ -273,18 +294,20 @@ typeCheck (StructInitialization tok sName fieldInits) = do
                 }
 typeCheck (FunctionLit tok params returnType body) = do
   oldEnv <- get
-  modify (extendedTypeEnv params)
+  paramTypes <- mapM resolveParamType params
+  let paramBindings = zip (map paramName params) paramTypes
+  modify (extendTypeEnv paramBindings)
   typedBody <- mapM statementTypeChecker body
   retStack <- gets currentRetTy
   put oldEnv -- restore BEFORE returning, always
   inferredRetT <- simplifyRetTy <$> (mapM resolveType retStack)
-  tParams <- mapM toTParam params
-  let paramTypes = map (\(TParam _ _ ty) -> ty) tParams
+  let tParams = zipWith toTParam params paramTypes
+  let paramTypes' = map (\(TParam _ _ ty) -> ty) tParams
   case returnType of
     Just annT -> do
       resolvedAnnT <- resolveType annT
       if isCompatible inferredRetT resolvedAnnT
-        then return $ TFunctionLit tok tParams resolvedAnnT typedBody (FnT paramTypes inferredRetT)
+        then return $ TFunctionLit tok tParams resolvedAnnT typedBody (FnT paramTypes' inferredRetT)
         else
           lift $
             Left $
@@ -294,15 +317,15 @@ typeCheck (FunctionLit tok params returnType body) = do
                   pos = Just (getPos tok)
                 }
     Nothing ->
-      return $ TFunctionLit tok tParams inferredRetT typedBody (FnT paramTypes inferredRetT)
+      return $ TFunctionLit tok tParams inferredRetT typedBody (FnT paramTypes' inferredRetT)
   where
-    toTParam :: Param -> Check TParam
-    toTParam (Param t n maybeT) = do
-      resolvedT <- case maybeT of
-        Just (UnresolvedT _) -> resolveType (fromJust maybeT)
-        Just ty -> return ty
-        Nothing -> return AnyT
-      return (TParam t n resolvedT)
+    resolveParamType :: Param -> Check Type
+    resolveParamType (Param t _ maybeT) =
+      case maybeT of
+        Just ty -> resolveType ty
+        Nothing -> lift $ Left $ InvalidParam {pos = Just (getPos t)}
+    toTParam :: Param -> Type -> TParam
+    toTParam (Param t n _) ty = TParam t n ty
 typeCheck (CallExpression tok func args) = do
   tFunc <- typeCheck func
   tArgs <- mapM typeCheck args
@@ -315,7 +338,7 @@ typeCheck (CallExpression tok func args) = do
                 [ (expected, got)
                   | (expected, gotExpr) <- zip paramTypes tArgs,
                     let got = getType gotExpr,
-                    not (isCompatible expected got)
+                    not (isCompatible got expected)
                 ]
            in case mismatched of
                 ((expected, got) : _) ->
@@ -325,12 +348,9 @@ typeCheck (CallExpression tok func args) = do
     _ -> lift $ Left $ NotCallable {gotType = getType tFunc, pos = Just (getPos tok)}
 typeCheck _ = lift (Left $ InvalidParam Nothing)
 
-extendedTypeEnv :: [Param] -> TypecheckEnv -> TypecheckEnv
-extendedTypeEnv params env =
-  foldl go env params
-  where
-    go :: TypecheckEnv -> Param -> TypecheckEnv
-    go env (Param _ name maybeType) = defineVar name (fromMaybe AnyT maybeType) env
+extendTypeEnv :: [(String, Type)] -> TypecheckEnv -> TypecheckEnv
+extendTypeEnv bindings env =
+  foldl (\acc (name, ty) -> defineVar name ty acc) env bindings
 
 mkMismatch :: Type -> Type -> Maybe Position -> Either TypeError Type
 mkMismatch l r p = Left $ TypeMismatch {expected = l, got = r, pos = p}
@@ -370,8 +390,6 @@ typeCheckSum FloatT FloatT = Right FloatT
 typeCheckSum IntT FloatT = Right FloatT
 typeCheckSum FloatT IntT = Right FloatT
 typeCheckSum StringT StringT = Right StringT
-typeCheckSum AnyT _ = Right AnyT
-typeCheckSum _ AnyT = Right AnyT
 typeCheckSum l r = mkMismatch l r Nothing
 
 typeCheckArith :: String -> Type -> Type -> Either TypeError Type
@@ -379,13 +397,9 @@ typeCheckArith op IntT IntT = Right IntT
 typeCheckArith op FloatT FloatT = Right FloatT
 typeCheckArith op IntT FloatT = Right FloatT
 typeCheckArith op FloatT IntT = Right FloatT
-typeCheckArith op AnyT _ = Right AnyT
-typeCheckArith op _ AnyT = Right AnyT
 typeCheckArith op l r = mkOpError op l r
 
 typeCheckEquality :: Type -> Type -> Either TypeError Type
-typeCheckEquality AnyT _ = Right BoolT
-typeCheckEquality _ AnyT = Right BoolT
 -- Equality is allowed when types overlap
 typeCheckEquality t1 t2 =
   case intersectType t1 t2 of
@@ -397,10 +411,12 @@ typeCheckComparison op IntT IntT = Right BoolT
 typeCheckComparison op FloatT FloatT = Right BoolT
 typeCheckComparison op IntT FloatT = Right BoolT
 typeCheckComparison op FloatT IntT = Right BoolT
-typeCheckComparison op AnyT _ = Right BoolT
-typeCheckComparison op _ AnyT = Right BoolT
 -- Explicit error for invalid comparison (e.g., comparing String < Int)
 typeCheckComparison op l r = mkOpError op l r
+
+typeCheckLogical :: Type -> Type -> Either TypeError Type
+typeCheckLogical BoolT BoolT = Right BoolT
+typeCheckLogical l r = mkMismatch l r Nothing
 
 statementTypeChecker :: Statement -> Check TStatement
 statementTypeChecker (Program stmts) = do
@@ -478,6 +494,20 @@ branchEnv initialEnv (TFloatLit {}) = (Just initialEnv, Nothing)
 branchEnv initialEnv (TPrefixExpression _ Bang right _) = do
   let (truthyEnv, falsyEnv) = branchEnv initialEnv right
   (falsyEnv, truthyEnv)
+branchEnv initialEnv (TInfixExpression _ left And right _) =
+  case branchEnv initialEnv left of
+    (Nothing, falsyEnv) -> (Nothing, falsyEnv)
+    (Just truthyEnv, falsyEnvLeft) ->
+      let (truthyEnvRight, falsyEnvRight) = branchEnv truthyEnv right
+          falsyEnv = mergeBranchEnvs initialEnv falsyEnvLeft falsyEnvRight
+       in (truthyEnvRight, falsyEnv)
+branchEnv initialEnv (TInfixExpression _ left Or right _) =
+  case branchEnv initialEnv left of
+    (truthyEnvLeft, Nothing) -> (truthyEnvLeft, Nothing)
+    (truthyEnvLeft, Just falsyEnvLeft) ->
+      let (truthyEnvRight, falsyEnvRight) = branchEnv falsyEnvLeft right
+          truthyEnv = mergeBranchEnvs initialEnv truthyEnvLeft truthyEnvRight
+       in (truthyEnv, falsyEnvRight)
 branchEnv initialEnv (TInfixExpression _ left Equal right _) =
   case (left, right) of
     (TIdentifierLit _ _ lTy, TNullLit _ _) ->
@@ -500,9 +530,58 @@ branchEnv initialEnv (TInfixExpression _ left Equal right _) =
           let truthEnv = narrowEnv (narrowEnv initialEnv left narrowTy) right narrowTy
            in (Just truthEnv, Just initialEnv)
 branchEnv env (TInfixExpression _ left NotEqual right _) =
-  case intersectType (getType left) (getType right) of
-    Nothing -> (Just env, Nothing) -- always true
-    Just _ -> (Just env, Just env) -- no narrowing
+  case (left, right) of
+    (TIdentifierLit _ _ lTy, TNullLit _ _) ->
+      let truthEnv = case removeNullType lTy of
+            Just narrowed -> Just (narrowEnv env left narrowed)
+            Nothing -> Nothing
+          falsyEnv = Just (narrowEnv env left NullT)
+       in (truthEnv, falsyEnv)
+    (TNullLit _ _, TIdentifierLit _ _ rTy) ->
+      let truthEnv = case removeNullType rTy of
+            Just narrowed -> Just (narrowEnv env right narrowed)
+            Nothing -> Nothing
+          falsyEnv = Just (narrowEnv env right NullT)
+       in (truthEnv, falsyEnv)
+    _ ->
+      case intersectType (getType left) (getType right) of
+        Nothing -> (Just env, Nothing) -- always true
+        Just _ -> (Just env, Just env) -- no narrowing
+branchEnv env (TCallExpression _ (TIdentifierLit _ "isStruct" _) [TIdentifierLit _ structName _, var@(TIdentifierLit _ name varTy)] _) =
+  let structTy = StructT structName
+      currentTy = fromMaybe varTy (lookupVar name env)
+   in case intersectType currentTy structTy of
+        Nothing -> (Nothing, Just env) -- always false
+        Just _ ->
+          let truthEnv = Just (narrowEnv env var structTy)
+              falsyEnv = case removeType structTy currentTy of
+                Just narrowed -> Just (narrowEnv env var narrowed)
+                Nothing -> Nothing
+           in (truthEnv, falsyEnv)
+branchEnv env (TCallExpression _ (TIdentifierLit _ name _) [var@(TIdentifierLit _ varName varTy)] _) =
+  case Map.lookup name assertMap of
+    Just assertedTy ->
+      let currentTy = fromMaybe varTy (lookupVar varName env)
+       in case intersectType currentTy assertedTy of
+            Nothing -> (Nothing, Just env) -- always false
+            Just narrowed ->
+              let truthEnv = Just (narrowEnv env var narrowed)
+                  falsyEnv = case removeType narrowed currentTy of
+                    Just narrowedTy -> Just (narrowEnv env var narrowedTy)
+                    Nothing -> Nothing
+               in (truthEnv, falsyEnv)
+    Nothing -> (Just env, Just env)
+  where
+    assertMap = Map.fromList typeCheckingBuiltInsAssert
+branchEnv env _ = (Just env, Just env)
+
+mergeBranchEnvs :: TypecheckEnv -> Maybe TypecheckEnv -> Maybe TypecheckEnv -> Maybe TypecheckEnv
+mergeBranchEnvs baseEnv leftEnv rightEnv =
+  case (leftEnv, rightEnv) of
+    (Nothing, Nothing) -> Nothing
+    (Just env, Nothing) -> Just env
+    (Nothing, Just env) -> Just env
+    (Just _, Just _) -> Just baseEnv
 
 inferBlockReturnType :: [Statement] -> Check (TStatement, [Type])
 inferBlockReturnType stmts = do
@@ -523,12 +602,22 @@ narrowEnv env expr narrowTy = case expr of
   _ ->
     env
 
+removeType :: Type -> Type -> Maybe Type
+removeType removeTy ty =
+  case ty of
+    UnionT s ->
+      let s' = Set.delete removeTy s
+       in case Set.toList s' of
+            [] -> Nothing
+            [t] -> Just t
+            _ -> Just (UnionT s')
+    _ ->
+      if ty == removeTy
+        then Nothing
+        else Just ty
+
 removeNullType :: Type -> Maybe Type
-removeNullType NullT = Nothing
-removeNullType (UnionT s) =
-  let s' = Set.delete NullT s
-   in if Set.null s' then Nothing else Just (UnionT s')
-removeNullType t = Just t
+removeNullType = removeType NullT
 
 --
 --
@@ -563,6 +652,7 @@ data BranchNode
 data NodeTypes
   = Expr Type
   | Ret Type
+  | Void
   deriving (Eq, Show)
 
 nodeFromData :: Maybe TypecheckEnv -> [Statement] -> Check BranchNode
@@ -574,6 +664,7 @@ nodeFromData (Just env) stmts = do
   case tBlock of
     TBlockStatement typed -> do
       let nodeTy = case blockExprInfo typed of
+            (Just VoidT, Nothing) -> Void
             (Just t1, Nothing) -> Expr t1
             (Nothing, Just t2) -> Ret t2
       pure (BranchNode tBlock newEnv nodeTy)
@@ -584,6 +675,7 @@ blockExprInfo typed =
   case reverse typed of
     (TReturnStatement _ tExpr : _) -> (Nothing, (Just $ getType tExpr))
     (TExpressionStatement _ tExpr : _) -> ((Just $ getType tExpr), Nothing)
+    _ -> (Just $ VoidT, Nothing)
 
 canBeTruthy :: Type -> Bool
 canBeTruthy NullT = False -- Null is always falsy

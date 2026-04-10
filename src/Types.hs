@@ -14,6 +14,7 @@ data Type
   | FloatT
   | StringT
   | NullT
+  | NeverT
   | VoidT
   | ArrayT Type
   | FnT [Type] Type
@@ -48,8 +49,6 @@ simplifyRetTy ts =
 isCompatible :: Type -> Type -> Bool
 isCompatible inferred annotated =
   case (inferred, annotated) of
-    (AnyT, _) -> True -- inferred is AnyT, accepts any annotation
-    (_, AnyT) -> False -- inferred is specific, doesn't match AnyT annotation
     (UnionT setInferred, UnionT setAnnotated) ->
       Set.isSubsetOf setInferred setAnnotated
     (t, UnionT setAnnotated) ->
@@ -61,8 +60,6 @@ isCompatible inferred annotated =
 intersect :: Type -> Type -> Bool
 intersect t1 t2 =
   case (t1, t2) of
-    (AnyT, _) -> True
-    (_, AnyT) -> True
     (UnionT t1, UnionT t2) ->
       not . Set.null $ Set.intersection t1 t2
     (UnionT t1, t2) ->
@@ -74,8 +71,6 @@ intersect t1 t2 =
 intersectType :: Type -> Type -> Maybe Type
 intersectType t1 t2 =
   case (t1, t2) of
-    (AnyT, t) -> Just t
-    (t, AnyT) -> Just t
     (UnionT s1, UnionT s2) ->
       let s = Set.intersection s1 s2
        in if Set.null s then Nothing else Just (UnionT s)
@@ -89,8 +84,6 @@ intersectType t1 t2 =
 subtractType :: Type -> Type -> Maybe Type
 subtractType t1 t2 =
   case (t1, t2) of
-    (AnyT, _) -> Just AnyT
-    (_, AnyT) -> Nothing
     (UnionT s1, UnionT s2) ->
       let s = Set.difference s1 s2
        in if Set.null s then Nothing else Just (UnionT s)
@@ -173,7 +166,7 @@ peekRetTy env =
     (t : _) -> Just t
 
 emptyEnv :: TypecheckEnv
-emptyEnv = TypecheckEnv [Map.empty] Map.empty [] Map.empty
+emptyEnv = TypecheckEnv [Map.fromList typeCheckingBuiltIns] Map.empty [] Map.empty
 
 lookupVar :: String -> TypecheckEnv -> Maybe Type
 lookupVar name env = go (typeEnv env)
@@ -231,3 +224,28 @@ data Rule
 
 narrow :: TypecheckEnv -> Rule -> TypecheckEnv
 narrow = undefined
+
+----------Built ins
+--
+
+builtInParamType :: Type
+builtInParamType =
+  let primitive = Set.fromList [IntT, StringT, BoolT, FloatT, NullT, VoidT]
+      arrayType = ArrayT (UnionT primitive)
+   in UnionT (Set.insert arrayType primitive)
+
+typeCheckingBuiltIns :: [(String, Type)]
+typeCheckingBuiltIns =
+  [ ("isInt", FnT [builtInParamType] BoolT),
+    ("isString", FnT [builtInParamType] BoolT),
+    ("isFloat", FnT [builtInParamType] BoolT),
+    ("isBool", FnT [builtInParamType] BoolT)
+  ]
+
+typeCheckingBuiltInsAssert :: [(String, Type)]
+typeCheckingBuiltInsAssert =
+  [ ("isInt", IntT),
+    ("isString", StringT),
+    ("isFloat", FloatT),
+    ("isBool", BoolT)
+  ]
