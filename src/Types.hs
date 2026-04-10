@@ -34,11 +34,15 @@ instance Monoid RetTypes where
 
 simplifyRetTy :: [Type] -> Type
 simplifyRetTy ts =
-  let s = Set.fromList ts
-   in case Set.toList s of
+  let mergedSet = foldr mergeTypes Set.empty ts
+   in case Set.toList mergedSet of
         [] -> VoidT
         [t] -> t
-        _ -> UnionT s
+        _ -> UnionT mergedSet
+  where
+    mergeTypes :: Type -> Set.Set Type -> Set.Set Type
+    mergeTypes (UnionT inner) st = Set.union inner st
+    mergeTypes st ty = Set.insert st ty
 
 -- TODO: Need to write a test for this cases of inclusion
 isCompatible :: Type -> Type -> Bool
@@ -152,7 +156,7 @@ data TypecheckEnv = TypecheckEnv
     currentRetTy :: [Type],
     fieldEnv :: Map.Map (String, String) Type
   }
-  deriving (Show)
+  deriving (Eq, Show)
 
 pushRetTy :: Type -> TypecheckEnv -> TypecheckEnv
 pushRetTy ty env =

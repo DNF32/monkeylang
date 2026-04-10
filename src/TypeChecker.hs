@@ -137,18 +137,26 @@ typeCheck (IfExpression tok condition consequence alternative) = do
   case (truthNode, falsyNode) of
     (Unreachable, Unreachable) ->
       lift $ Left $ InternalError {message = "If condition has no reachable branches", pos = Just (getPos tok)}
-    (BranchNode tStmt truthEnv exprTy retTy, Unreachable) -> do
-      let exprTy = if simplifyRetTy (truthRet ++ [NullT])
+    (BranchNode tStmt truthEnv nodeType, Unreachable) -> do
+      let ifExprTy = simplifyRetTy $ (: []) $ case nodeType of
+            Expr ty -> UnionT (Set.fromList [ty, NullT])
+            Ret _ -> VoidT
       put truthEnv
-      return $ TIfExpression tok tCondition (Just tStmt) Nothing exprTy
-    (Unreachable, BranchNode tStmt falseEnv falseRet) -> do
-      let exprTy = simplifyRetTy falseRe
-      return $ TIfExpression tok tCondition Nothing (Just tStmt) exprTy
-    (BranchNode tStmt truthEnv truthRet, BranchNode fStmt falseEnv falseRet) -> do
-      mergedEnv <- lift $ mergeEnvs truthEnv falseEnv baseEnv
-      put mergedEnv
-      let exprTy = simplifyRetTy (truthRet ++ falseRet)
-      return $ TIfExpression tok tCondition (Just tStmt) (Just fStmt) exprTy
+      return $ TIfExpression tok tCondition (Just tStmt) Nothing ifExprTy
+    (Unreachable, BranchNode tStmt falseEnv nodeType) -> do
+      let ifExprTy = simplifyRetTy $ (: []) $ case nodeType of
+            Expr ty -> UnionT (Set.fromList [ty, NullT])
+            Ret _ -> VoidT
+      put falseEnv
+      return $ TIfExpression tok tCondition Nothing (Just tStmt) ifExprTy
+    (BranchNode tConsequence truthEnv truthNodeType, BranchNode tAlternative falseEnv falseNodeType) -> do
+      put baseEnv
+      let ifExprTy = simplifyRetTy $ (: []) $ case (truthNodeType, falseNodeType) of
+            (Ret _, Ret _) -> VoidT
+            (Expr ty, Ret _) -> UnionT (Set.fromList [ty, NullT])
+            (Ret _, Expr ty) -> UnionT (Set.fromList [ty, NullT])
+            (Expr ty1, Expr ty2) -> UnionT (Set.fromList [ty1, ty2])
+      return $ TIfExpression tok tCondition (Just tConsequence) (Just tAlternative) ifExprTy
 --  outputEnv <- lift $ case (tConsequence ,tAlternative) of
 --    (Nothing, Nothing)->
 --    (tConsequence , Nothing) -> if truthHasReturn
@@ -547,27 +555,35 @@ data BranchNode
   = BranchNode
       { nodeStmt :: TStatement,
         nodeEnv :: TypecheckEnv,
-        nodeExprTy :: Maybe Type,
-        nodeHasTy :: Maybe Type
+        nodeType :: NodeTypes
       }
   | Unreachable
+  deriving (Eq, Show)
+
+data NodeTypes
+  = Expr Type
+  | Ret Type
   deriving (Eq, Show)
 
 nodeFromData :: Maybe TypecheckEnv -> [Statement] -> Check BranchNode
 nodeFromData Nothing _ = pure Unreachable
 nodeFromData (Just env) stmts = do
   put env
-  tBlock@(TBlockStatement typed) <- statementTypeChecker (BlockStatement stmts)
+  tBlock <- statementTypeChecker (BlockStatement stmts)
   newEnv <- get
-  let (exprTy, retTy) = blockExprInfo typed
-  pure (BranchNode tBlock newEnv exprTy retTy)
+  case tBlock of
+    TBlockStatement typed -> do
+      let nodeTy = case blockExprInfo typed of
+            (Just t1, Nothing) -> Expr t1
+            (Nothing, Just t2) -> Ret t2
+      pure (BranchNode tBlock newEnv nodeTy)
+    _ -> lift $ Left $ InternalError {message = "Expected block statement", pos = Nothing}
 
 blockExprInfo :: [TStatement] -> (Maybe Type, Maybe Type)
 blockExprInfo typed =
   case reverse typed of
     (TReturnStatement _ tExpr : _) -> (Nothing, (Just $ getType tExpr))
     (TExpressionStatement _ tExpr : _) -> ((Just $ getType tExpr), Nothing)
-    _ -> ([], False)
 
 canBeTruthy :: Type -> Bool
 canBeTruthy NullT = False -- Null is always falsy
