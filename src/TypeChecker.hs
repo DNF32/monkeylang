@@ -561,12 +561,12 @@ branchEnv env (TCallExpression _ (TIdentifierLit _ "isStruct" _) [TIdentifierLit
 branchEnv env (TCallExpression _ (TIdentifierLit _ name _) [var@(TIdentifierLit _ varName varTy)] _) =
   case Map.lookup name assertMap of
     Just assertedTy ->
-      let currentTy = fromMaybe varTy (lookupVar varName env)
-       in case intersectType currentTy assertedTy of
+      let currentVarTy = fromMaybe varTy (lookupVar varName env)
+       in case intersectType currentVarTy assertedTy of
             Nothing -> (Nothing, Just env) -- always false
             Just narrowed ->
               let truthEnv = Just (narrowEnv env var narrowed)
-                  falsyEnv = case removeType narrowed currentTy of
+                  falsyEnv = case removeType narrowed currentVarTy of
                     Just narrowedTy -> Just (narrowEnv env var narrowedTy)
                     Nothing -> Nothing
                in (truthEnv, falsyEnv)
