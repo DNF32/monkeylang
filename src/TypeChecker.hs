@@ -3,7 +3,7 @@
 
 module TypeChecker where
 
-import Ast (Expression (..), FieldDecl (FieldDecl, fieldName), FieldInitialization (FieldInit), Param (..), Statement (..), TExpression (..), TFieldInitialization (TFieldInit), TParam (..), TStatement (..), getType)
+import Ast (Binding (..), Expression (..), FieldDecl (FieldDecl, fieldName), FieldInitialization (FieldInit), Param (..), Statement (..), TBinding (..), TExpression (..), TFieldInitialization (TFieldInit), TParam (..), TStatement (..), getType)
 import Control.Monad.State (MonadState (get), StateT, gets, lift, modify, put)
 import Data.Map qualified as Map
 import Data.Maybe (fromMaybe)
@@ -422,7 +422,7 @@ statementTypeChecker :: Statement -> Check TStatement
 statementTypeChecker (Program stmts) = do
   tStmts <- mapM statementTypeChecker stmts
   return (TProgram tStmts)
-statementTypeChecker (LetStatement tok (IdentifierLit identtok@(Token tType pos) name) expr ann) = do
+statementTypeChecker (LetStatement tok (IdentifierLit identtok@(Token tType pos) name) expr (Binding ann permission)) = do
   typedExpr <- typeCheck expr
   let typeExpr = getType typedExpr
 

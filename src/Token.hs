@@ -53,6 +53,9 @@ data TokenType
   | TrueLit -- Remove String: always "true"
   | FalseLit -- Remove String: always "false"
   | If -- Remove String: always "if"
+  | While -- Remove String: always "if"
+  | Continue -- Remove String: always "if"
+  | Break -- Remove String: always "if"
   | Else -- Remove String: always "else"
   | Return -- Remove String: always "return"
   | Union
@@ -63,6 +66,7 @@ data TokenType
   | FloatType
   | VoidType
   | StructType
+  | Mut
   | Pipe
   | And
   | Or
@@ -248,6 +252,9 @@ keywords =
     ("true", TrueLit),
     ("false", FalseLit),
     ("if", If),
+    ("while", While),
+    ("break", Break),
+    ("continue", Continue),
     ("else", Else),
     ("return", Return),
     ("Null", Null),
@@ -257,7 +264,8 @@ keywords =
     ("Float", FloatType),
     ("Void", VoidType), -- missing!
     ("Union", Union),
-    ("Struct", StructType)
+    ("Struct", StructType),
+    ("mut", Mut)
   ]
 
 lookupIdent :: String -> TokenType

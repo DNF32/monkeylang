@@ -10,6 +10,8 @@ module Ast
     FieldInitialization (..),
     TFieldInitialization (..),
     TExpression (..),
+    Binding (..),
+    TBinding (..),
     TStatement (..),
     Param (..),
     TParam (..),
@@ -105,11 +107,17 @@ infix 4 ?==
 
 data Statement
   = Program {statements :: [Statement]}
-  | LetStatement {stmtToken :: Token, name :: Expression, value :: Expression, ann :: Maybe Type}
+  | LetStatement {stmtToken :: Token, name :: Expression, value :: Expression, binding :: Binding}
   | ReturnStatement {stmtToken :: Token, result :: Expression}
   | ExpressionStatement {stmtToken :: Token, expr :: Expression}
   | BlockStatement {statements :: [Statement]}
   | StructDecl {stmtToken :: Token, structName :: String, fields :: [FieldDecl]}
+  deriving (Eq, Show)
+
+data Binding = Binding
+  { bindAnn :: Maybe Type,
+    bindMutable :: Bool
+  }
   deriving (Eq, Show)
 
 data Precedence = LOWEST | LOGICAL_OR | LOGICAL_AND | EQUALS | LESSGREATER | SUM | PRODUCT | PREFIX | CALL | INDEX deriving (Ord, Eq, Show)
@@ -287,7 +295,7 @@ data TExpression
   | TStringLit {tToken :: Token, tStringValue :: String, ty :: Type}
   | TBoolLit {tToken :: Token, tBoolValue :: Bool, ty :: Type}
   | TNullLit {tToken :: Token, ty :: Type}
-  | TIdentifierLit {tToken :: Token, tName :: String, ty :: Type}
+  | TIdentifierLit {tToken :: Token, tName :: String, tBinding :: TBinding}
   | TPrefixExpression {tToken :: Token, operator :: Operator, right :: TExpression, ty :: Type}
   | TInfixExpression {tToken :: Token, left :: TExpression, operator :: Operator, right :: TExpression, ty :: Type}
   | TFunctionLit {tToken :: Token, parameters :: [TParam], returnType :: Type, body :: [TStatement], ty :: Type} -- Expression!
@@ -298,6 +306,12 @@ data TExpression
   | TStructInitialization {token :: Token, structName :: String, fieldInits :: [TFieldInitialization], ty :: Type}
   deriving (Eq, Show)
 
+data TBinding = TBinding
+  { bindAnn :: Type,
+    bindMutable :: Bool
+  }
+  deriving (Eq, Show)
+
 getType :: TExpression -> Type
 getType = \case
   TIntLit {ty = t} -> t
@@ -305,7 +319,7 @@ getType = \case
   TStringLit {ty = t} -> t
   TBoolLit {ty = t} -> t
   TNullLit {ty = t} -> t
-  TIdentifierLit {ty = t} -> t
+  TIdentifierLit {tBinding = TBinding t _} -> t
   TPrefixExpression {ty = t} -> t
   TInfixExpression {ty = t} -> t
   TFunctionLit {ty = t} -> t
@@ -317,7 +331,7 @@ getType = \case
 
 data TStatement
   = TProgram {tStatements :: [TStatement]}
-  | TLetStatement {tLetToken :: Token, tLetName :: TExpression, tLetValue :: TExpression, tLetType :: Type}
+  | TLetStatement {tLetToken :: Token, tLetName :: TExpression, tLetValue :: TExpression, tLetBinding :: TBinding}
   | TReturnStatement {tReturnToken :: Token, tResult :: TExpression}
   | TExpressionStatement {tStmtToken :: Token, tExpr :: TExpression}
   | TBlockStatement {tBlockStatements :: [TStatement]}

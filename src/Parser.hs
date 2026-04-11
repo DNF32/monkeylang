@@ -2,7 +2,7 @@
 
 module Parser where
 
-import Ast (Expression (..), FieldDecl (..), FieldInitialization (..), Param (..), Precedence (..), Statement (..), infixToPrecedence)
+import Ast (Binding (..), Expression (..), FieldDecl (..), FieldInitialization (..), Param (..), Precedence (..), Statement (..), infixToPrecedence)
 import Control.Applicative (Alternative (..))
 import Control.Lens
 import Data.Char (GeneralCategory (LowercaseLetter))
@@ -354,12 +354,13 @@ parseFieldAccessExpression leftExpr = do
 parseLetStatement :: AstParser Statement
 parseLetStatement = do
   tok <- isToken Let
+  permission <- optional (isToken Mut)
   identifier <- parseIdentifierExpression
   hint <- optional parseTypeHint
   _ <- isToken Assign
   expr <- parseExpressionRbp LOWEST
   _ <- optional (isToken Semicolon)
-  return (LetStatement tok identifier expr hint)
+  return (LetStatement tok identifier expr (Binding permission hint))
 
 parseTypeHint :: AstParser Type
 parseTypeHint = do

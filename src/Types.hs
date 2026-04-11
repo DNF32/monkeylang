@@ -118,7 +118,9 @@ type StructDef = Map.Map FieldName Type
 
 type TypeDefs = Map.Map StructName StructDef
 
-type TypeEnv = Map.Map String Type
+type TypeEnv = Map.Map String Binding
+
+type FuncEnv = Map.Map String Type
 
 -- ============================================================
 -- Errors
@@ -145,6 +147,7 @@ withPos p err = err {pos = Just p}
 
 data TypecheckEnv = TypecheckEnv
   { typeEnv :: [TypeEnv],
+    funcEnv :: [FuncEnv],
     typeDefs :: TypeDefs,
     currentRetTy :: [Type],
     fieldEnv :: Map.Map (String, String) Type
