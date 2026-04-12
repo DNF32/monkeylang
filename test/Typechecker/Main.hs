@@ -176,6 +176,14 @@ testIfBranchingTypeNarrowing = do
             Just ty -> ty `shouldBe` IntT
             _ -> expectationFailure "Expected let-bound x"
         Left err -> expectationFailure (show err)
+    it "Should narrow null conditions" $ do
+      let program = "let x: Union[Int, Null] = Null; let y = if (x!=Null && isString(x)) { x } else { 10 }"
+      case typeCheckerHelper program of
+        Right (TProgram _stmts, env) ->
+          case lookupVar "y" env of
+            Just ty -> ty `shouldBe` IntT
+            _ -> expectationFailure ("Expected y to have union type, got: " ++ show (lookupVar "y" env))
+        Left err -> expectationFailure (show err)
 
 testCallExprTyping :: Spec
 testCallExprTyping = do

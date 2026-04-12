@@ -1,3 +1,5 @@
+{-# LANGUAGE DuplicateRecordFields #-}
+
 module Types where
 
 import Data.List (nub)
@@ -17,7 +19,7 @@ data Type
   | NeverT
   | VoidT
   | ArrayT Type
-  | FnT [Type] Type
+  | FnT [Binding] Type
   | UnionT (Set.Set Type)
   | StructT StructName
   | UnresolvedT StructName
@@ -122,6 +124,27 @@ type TypeEnv = Map.Map String Binding
 
 type FuncEnv = Map.Map String Type
 
+class HasType a where
+  getType :: a -> Type
+
+data Binding = Binding
+  { bindTy :: Type,
+    bindMutable :: Mutability
+  }
+  deriving (Eq, Show, Ord)
+
+instance HasType Binding where
+  getType (Binding ty _) = ty
+
+data Mutability = Mutable | Immutable
+  deriving (Eq, Show, Ord)
+
+mapBindingType :: (Type -> Type) -> Binding -> Binding
+mapBindingType f b = b {bindTy = f (bindTy b)}
+
+setBindingType :: Type -> Binding -> Binding
+setBindingType ty b = b {bindTy = ty}
+
 -- ============================================================
 -- Errors
 -- ============================================================
@@ -169,9 +192,9 @@ peekRetTy env =
     (t : _) -> Just t
 
 emptyEnv :: TypecheckEnv
-emptyEnv = TypecheckEnv [Map.fromList typeCheckingBuiltIns] Map.empty [] Map.empty
+emptyEnv = TypecheckEnv [] [Map.fromList typeCheckingBuiltIns] Map.empty [] Map.empty
 
-lookupVar :: String -> TypecheckEnv -> Maybe Type
+lookupVar :: String -> TypecheckEnv -> Maybe Binding
 lookupVar name env = go (typeEnv env)
   where
     go [] = Nothing
@@ -200,19 +223,29 @@ clearFieldRefinements :: String -> TypecheckEnv -> TypecheckEnv
 clearFieldRefinements var env =
   env {fieldEnv = Map.filterWithKey (\(v, _) _ -> v /= var) (fieldEnv env)}
 
-defineVar :: String -> Type -> TypecheckEnv -> TypecheckEnv
-defineVar name t env =
-  case typeEnv env of
-    [] -> env {typeEnv = [Map.singleton name t]}
-    (scope : rest) -> env {typeEnv = Map.insert name t scope : rest}
-
 updateVar :: String -> Type -> TypecheckEnv -> TypecheckEnv
 updateVar name t env = env {typeEnv = go (typeEnv env)}
   where
-    go [] = [Map.singleton name t]
+    go [] = error ("updateVar: variable not found: " ++ name)
     go (scope : rest)
-      | Map.member name scope = Map.insert name t scope : rest
+      | Map.member name scope = Map.adjust (\(Binding _ per) -> (Binding t per)) name scope : rest
       | otherwise = scope : go rest
+
+defineBinding :: String -> Binding -> TypecheckEnv -> TypecheckEnv
+defineBinding name bd env =
+  case typeEnv env of
+    [] -> env {typeEnv = [Map.singleton name bd]}
+    (scope : rest) -> env {typeEnv = Map.insert name bd scope : rest}
+
+updateBinding :: String -> (Binding -> Binding) -> TypecheckEnv -> TypecheckEnv
+updateBinding name f env = env {typeEnv = go (typeEnv env)}
+  where
+    go [] = error ("updateBinding: variable not found: " ++ name)
+    go (scope : rest)
+      | Map.member name scope =
+          Map.adjust f name scope : rest
+      | otherwise =
+          scope : go rest
 
 pushScope :: TypecheckEnv -> TypecheckEnv
 pushScope env = env {typeEnv = Map.empty : typeEnv env}
@@ -231,11 +264,12 @@ narrow = undefined
 ----------Built ins
 --
 
-builtInParamType :: Type
+builtInParamType :: Binding
 builtInParamType =
   let primitive = Set.fromList [IntT, StringT, BoolT, FloatT, NullT, VoidT]
       arrayType = ArrayT (UnionT primitive)
-   in UnionT (Set.insert arrayType primitive)
+      generalType = UnionT (Set.insert arrayType primitive)
+   in (Binding generalType Immutable)
 
 typeCheckingBuiltIns :: [(String, Type)]
 typeCheckingBuiltIns =

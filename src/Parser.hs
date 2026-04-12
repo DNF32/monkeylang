@@ -96,11 +96,16 @@ parseIdentifierExpression =
         }
 
 parseParam :: AstParser Param
-parseParam = expressionToParam <$> parseIdentifierExpression <*> optional parseTypeHint
+parseParam =
+  expressionToParam <$> (maybe Immutable mutFromToken <$> optional (isToken Mut)) <*> parseIdentifierExpression <*> (maybe AnyT id <$> optional parseTypeHint)
+  where
+    mutFromToken :: Token -> Mutability
+    mutFromToken (Token Mut _) = Mutable
+    mutFromToken _ = Immutable
 
-expressionToParam :: Expression -> Maybe Type -> Param
-expressionToParam identifier@(IdentifierLit tok name) ty = Param {paramToken = tok, paramName = name, paramType = ty}
-expressionToParam expr _ =
+expressionToParam :: Mutability -> Expression -> Type -> Param
+expressionToParam per (IdentifierLit tok name) ty = Param {paramToken = tok, paramName = name, paramType = ty, paramMut = per}
+expressionToParam _ _ expr =
   error $ "expressionToParam called on non-IdentifierLit: " ++ show expr
 
 parseIntExpression :: AstParser Expression
@@ -354,13 +359,18 @@ parseFieldAccessExpression leftExpr = do
 parseLetStatement :: AstParser Statement
 parseLetStatement = do
   tok <- isToken Let
-  permission <- optional (isToken Mut)
+  permission <-
+    ( \x -> case x of
+        Just _ -> Mutable
+        Nothing -> Immutable
+      )
+      <$> optional (isToken Mut)
   identifier <- parseIdentifierExpression
   hint <- optional parseTypeHint
   _ <- isToken Assign
   expr <- parseExpressionRbp LOWEST
   _ <- optional (isToken Semicolon)
-  return (LetStatement tok identifier expr (Binding permission hint))
+  return (LetStatement tok identifier expr hint permission)
 
 parseTypeHint :: AstParser Type
 parseTypeHint = do

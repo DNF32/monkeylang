@@ -11,7 +11,6 @@ module Ast
     TFieldInitialization (..),
     TExpression (..),
     Binding (..),
-    TBinding (..),
     TStatement (..),
     Param (..),
     TParam (..),
@@ -92,7 +91,8 @@ data FieldInitialization = FieldInit
 data Param = Param
   { paramToken :: Token,
     paramName :: String,
-    paramType :: Maybe Type
+    paramType :: Type,
+    paramMut :: Mutability
   }
   deriving (Eq, Show)
 
@@ -107,17 +107,11 @@ infix 4 ?==
 
 data Statement
   = Program {statements :: [Statement]}
-  | LetStatement {stmtToken :: Token, name :: Expression, value :: Expression, binding :: Binding}
+  | LetStatement {stmtToken :: Token, name :: Expression, value :: Expression, ann :: Maybe Type, mutPer :: Mutability}
   | ReturnStatement {stmtToken :: Token, result :: Expression}
   | ExpressionStatement {stmtToken :: Token, expr :: Expression}
   | BlockStatement {statements :: [Statement]}
   | StructDecl {stmtToken :: Token, structName :: String, fields :: [FieldDecl]}
-  deriving (Eq, Show)
-
-data Binding = Binding
-  { bindAnn :: Maybe Type,
-    bindMutable :: Bool
-  }
   deriving (Eq, Show)
 
 data Precedence = LOWEST | LOGICAL_OR | LOGICAL_AND | EQUALS | LESSGREATER | SUM | PRODUCT | PREFIX | CALL | INDEX deriving (Ord, Eq, Show)
@@ -141,7 +135,7 @@ infixToPrecedence token = case token of
   otherwise -> LOWEST
 
 statementToString :: Statement -> String
-statementToString (LetStatement _ name value ann) = "let " ++ expressionToString name ++ show ann ++ " = " ++ expressionToString value
+statementToString (LetStatement _ name value ann mulPer) = "let " ++ expressionToString name ++ show ann ++ " = " ++ expressionToString value
 statementToString (ReturnStatement _ value) = "return " ++ expressionToString value
 statementToString (ExpressionStatement _ value) = expressionToString value
 statementToString (BlockStatement stmts) = intercalate "" (map statementToString stmts)
@@ -149,7 +143,7 @@ statementToString (Program stmts) = intercalate "" (map statementToString stmts)
 
 prettyPrintStatement :: Int -> Statement -> String
 prettyPrintStatement indent stmt = case stmt of
-  LetStatement _ name value ann ->
+  LetStatement _ name value ann mutPer ->
     spaces indent
       ++ "LetStatement\n"
       ++ spaces (indent + 2)
@@ -263,7 +257,7 @@ prettyPrintExpression indent expr = case expr of
             ++ intercalate "" (map (prettyPrintStatement (indent + 4)) alt)
   where
     spaces n = replicate n ' '
-    renderParam (Param _ name ty) = name ++ maybe "" (\t -> ": " ++ show t) ty
+    renderParam (Param _ name ty _) = name ++ (\t -> ": " ++ show t) ty
 
 expressionToString :: Expression -> String
 expressionToString (IntLit _ val) = show val
@@ -295,7 +289,7 @@ data TExpression
   | TStringLit {tToken :: Token, tStringValue :: String, ty :: Type}
   | TBoolLit {tToken :: Token, tBoolValue :: Bool, ty :: Type}
   | TNullLit {tToken :: Token, ty :: Type}
-  | TIdentifierLit {tToken :: Token, tName :: String, tBinding :: TBinding}
+  | TIdentifierLit {tToken :: Token, tName :: String, tBinding :: Binding}
   | TPrefixExpression {tToken :: Token, operator :: Operator, right :: TExpression, ty :: Type}
   | TInfixExpression {tToken :: Token, left :: TExpression, operator :: Operator, right :: TExpression, ty :: Type}
   | TFunctionLit {tToken :: Token, parameters :: [TParam], returnType :: Type, body :: [TStatement], ty :: Type} -- Expression!
@@ -306,32 +300,26 @@ data TExpression
   | TStructInitialization {token :: Token, structName :: String, fieldInits :: [TFieldInitialization], ty :: Type}
   deriving (Eq, Show)
 
-data TBinding = TBinding
-  { bindAnn :: Type,
-    bindMutable :: Bool
-  }
-  deriving (Eq, Show)
-
-getType :: TExpression -> Type
-getType = \case
-  TIntLit {ty = t} -> t
-  TFloatLit {ty = t} -> t
-  TStringLit {ty = t} -> t
-  TBoolLit {ty = t} -> t
-  TNullLit {ty = t} -> t
-  TIdentifierLit {tBinding = TBinding t _} -> t
-  TPrefixExpression {ty = t} -> t
-  TInfixExpression {ty = t} -> t
-  TFunctionLit {ty = t} -> t
-  TCallExpression {ty = t} -> t
-  TIndexExpression {ty = t} -> t
-  TIfExpression {ty = t} -> t
-  TFieldAccess {ty = t} -> t
-  TStructInitialization {ty = t} -> t
+instance HasType TExpression where
+  getType = \case
+    TIntLit {ty = t} -> t
+    TFloatLit {ty = t} -> t
+    TStringLit {ty = t} -> t
+    TBoolLit {ty = t} -> t
+    TNullLit {ty = t} -> t
+    TIdentifierLit {tBinding = Binding t _} -> t
+    TPrefixExpression {ty = t} -> t
+    TInfixExpression {ty = t} -> t
+    TFunctionLit {ty = t} -> t
+    TCallExpression {ty = t} -> t
+    TIndexExpression {ty = t} -> t
+    TIfExpression {ty = t} -> t
+    TFieldAccess {ty = t} -> t
+    TStructInitialization {ty = t} -> t
 
 data TStatement
   = TProgram {tStatements :: [TStatement]}
-  | TLetStatement {tLetToken :: Token, tLetName :: TExpression, tLetValue :: TExpression, tLetBinding :: TBinding}
+  | TLetStatement {tLetToken :: Token, tLetName :: TExpression, tLetValue :: TExpression, tLetBinding :: Binding}
   | TReturnStatement {tReturnToken :: Token, tResult :: TExpression}
   | TExpressionStatement {tStmtToken :: Token, tExpr :: TExpression}
   | TBlockStatement {tBlockStatements :: [TStatement]}
@@ -341,7 +329,8 @@ data TStatement
 data TParam = TParam
   { tParamToken :: Token,
     tParamName :: String,
-    tParamType :: Type
+    tParamType :: Type,
+    tParamMut :: Mutability
   }
   deriving (Eq, Show)
 
@@ -374,7 +363,7 @@ instance AstEq FieldDecl where
   FieldDecl _ n1 t1 ?== FieldDecl _ n2 t2 = n1 == n2 && t1 == t2
 
 instance AstEq Param where
-  Param _ n1 t1 ?== Param _ n2 t2 = n1 == n2 && t1 == t2
+  Param _ n1 t1 m1 ?== Param _ n2 t2 m2 = n1 == n2 && t1 == t2 && m1 == m2
 
 instance AstEq Statement where
   Program {statements = l} ?== Program {statements = r} = l ?== r
