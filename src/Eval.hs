@@ -183,7 +183,7 @@ evalBlockStatement (s1 : ss) = do
     _ -> return voidObj
 
 evalLetStatement :: Statement -> Eval Object
-evalLetStatement (LetStatement _ (IdentifierLit _ name) value _) = do
+evalLetStatement (LetStatement _ (IdentifierLit _ name) value _ _) = do
   obj <- unwrapReturnObj <$> evalExpression value
   case obj of
     ErrorObj _ -> return obj
@@ -384,7 +384,7 @@ functionEval params body env args
 
 extendedEnv :: Enviroment -> [Param] -> [Object] -> Enviroment
 extendedEnv env params evaluatedArgs =
-  Map.union (Map.fromList [(name, obj) | (Param _ name _, obj) <- zip params evaluatedArgs]) env
+  Map.union (Map.fromList [(name, obj) | (Param _ name _ _, obj) <- zip params evaluatedArgs]) env
 
 isError :: Object -> Bool
 isError (ErrorObj _) = True

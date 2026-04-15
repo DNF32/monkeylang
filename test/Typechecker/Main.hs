@@ -48,7 +48,7 @@ testFunctionTypeChecking = do
       let program = "let x = fn(x:Int): String{return \"that\";}"
       case typeCheckerHelper program of
         Right (TProgram stmts, _) -> case head stmts of
-          TLetStatement _ (TIdentifierLit _ _ ty) _ _ -> ty `shouldBe` (FnT [IntT] StringT)
+          TLetStatement _ (TIdentifierLit _ _ ty) _ _ -> ty `shouldBe` (Binding (FnT [Binding IntT Immutable] StringT) Immutable)
           _ -> expectationFailure "Expected TLetStatement"
         Left err -> expectationFailure (show err)
   describe "Funtion with type hint" $ do
@@ -73,14 +73,14 @@ testFunctionTypeChecking = do
       let program = "let x = fn(x:Int){return \"that\";}"
       case typeCheckerHelper program of
         Right (TProgram stmts, _) -> case head stmts of
-          TLetStatement _ (TIdentifierLit _ name ty) _ _ -> ty `shouldBe` (FnT [IntT] StringT)
+          TLetStatement _ (TIdentifierLit _ name ty) _ _ -> ty `shouldBe` (Binding (FnT [Binding IntT Immutable] StringT) Immutable)
           _ -> expectationFailure "Expected TLetStatement"
         Left _ -> expectationFailure "Expected typechecked  but TypeMismatch  successfully"
     it "Should infer UnionT when if branches return different types" $ do
       let program = "let x = fn() { if (true) { return 5; } return \"hello\"; }"
       case typeCheckerHelper program of
         Right (TProgram stmts, _) -> case head stmts of
-          TLetStatement _ (TIdentifierLit _ name ty) _ _ -> ty `shouldBe` FnT [] (UnionT (Set.fromList ([StringT, IntT])))
+          TLetStatement _ (TIdentifierLit _ name ty) _ _ -> ty `shouldBe` Binding (FnT [] (UnionT (Set.fromList [StringT, IntT]))) Immutable
           _ -> expectationFailure "Expected TLetStatement"
         Left err -> expectationFailure (show err)
   describe "Resolve a struct type hint" $ do
@@ -88,14 +88,14 @@ testFunctionTypeChecking = do
       let program = "Struct Foo { x: Int; y: Int; }; let x = fn(x: Int): Foo {return Foo {x: x; y: x;}}"
       case typeCheckerHelper program of
         Right (TProgram stmts, _) -> case head stmts of
-          TLetStatement _ (TIdentifierLit _ name ty) _ _ -> ty `shouldBe` FnT [IntT] (StructT "Foo")
+          TLetStatement _ (TIdentifierLit _ name ty) _ _ -> ty `shouldBe` Binding (FnT [Binding IntT Immutable] (StructT "Foo")) Immutable
           _ -> expectationFailure "expected tletstatement"
         Left err -> expectationFailure (show err)
     it "Resolved the return type to the Struct Foo" $ do
       let program = "Struct Foo { x: Union[Foo,Null,Int]; y:Int; }; let x = fn(x: Int): Foo {return Foo {x: x; y: x;}}"
       case typeCheckerHelper program of
         Right (TProgram stmts, _) -> case head stmts of
-          TLetStatement _ (TIdentifierLit _ name ty) _ _ -> ty `shouldBe` FnT [IntT] (StructT "Foo")
+          TLetStatement _ (TIdentifierLit _ name ty) _ _ -> ty `shouldBe` Binding (FnT [Binding IntT Immutable] (StructT "Foo")) Immutable
           _ -> expectationFailure "expected tletstatement"
         Left err -> expectationFailure (show err)
 
@@ -122,7 +122,7 @@ testIfBranchingTypeNarrowing = do
       case typeCheckerHelper program of
         Right (TProgram _stmts, env) -> do
           case lookupVar "z" env of
-            Just ty -> ty `shouldBe` IntT
+            Just ty -> ty `shouldBe` Binding IntT Immutable
             _ -> expectationFailure "Expected TLetStatement"
         Left err -> expectationFailure (show err)
     it "narrowing allows branch-typed lets for null check" $ do
@@ -136,7 +136,7 @@ testIfBranchingTypeNarrowing = do
       case typeCheckerHelper program of
         Right (TProgram _stmts, env) ->
           case lookupVar "y" env of
-            Just ty -> ty `shouldBe` IntT
+            Just ty -> ty `shouldBe` Binding IntT Immutable
             _ -> expectationFailure ("Expected y to have union type, got: " ++ show (lookupVar "y" env))
         Left err -> expectationFailure (show err)
     it "Should narrow for isInt" $ do
@@ -144,7 +144,7 @@ testIfBranchingTypeNarrowing = do
       case typeCheckerHelper program of
         Right (TProgram _stmts, env) ->
           case lookupVar "y" env of
-            Just ty -> ty `shouldBe` IntT
+            Just ty -> ty `shouldBe` Binding IntT Immutable
             _ -> expectationFailure ("Expected y to have union type, got: " ++ show (lookupVar "y" env))
         Left err -> expectationFailure (show err)
     it "Should narrow for isString" $ do
@@ -152,7 +152,7 @@ testIfBranchingTypeNarrowing = do
       case typeCheckerHelper program of
         Right (TProgram _stmts, env) ->
           case lookupVar "y" env of
-            Just ty -> ty `shouldBe` StringT
+            Just ty -> ty `shouldBe` Binding StringT Immutable
             _ -> expectationFailure ("Expected y to have union type, got: " ++ show (lookupVar "y" env))
         Left err -> expectationFailure (show err)
     it "Impossible to narrow for isString and isInt" $ do
@@ -160,7 +160,7 @@ testIfBranchingTypeNarrowing = do
       case typeCheckerHelper program of
         Right (TProgram _stmts, env) ->
           case lookupVar "y" env of
-            Just ty -> ty `shouldBe` StringT
+            Just ty -> ty `shouldBe` Binding StringT Immutable
             _ -> expectationFailure ("Expected y to have union type, got: " ++ show (lookupVar "y" env))
         Left err -> expectationFailure (show err)
     it "Should error if condition is always false" $ do
@@ -173,7 +173,7 @@ testIfBranchingTypeNarrowing = do
       case typeCheckerHelper program of
         Right (TProgram _stmts, env) ->
           case lookupVar "x" env of
-            Just ty -> ty `shouldBe` IntT
+            Just ty -> ty `shouldBe` Binding IntT Immutable
             _ -> expectationFailure "Expected let-bound x"
         Left err -> expectationFailure (show err)
     it "Should narrow null conditions" $ do
@@ -181,7 +181,7 @@ testIfBranchingTypeNarrowing = do
       case typeCheckerHelper program of
         Right (TProgram _stmts, env) ->
           case lookupVar "y" env of
-            Just ty -> ty `shouldBe` IntT
+            Just ty -> ty `shouldBe` Binding IntT Immutable
             _ -> expectationFailure ("Expected y to have union type, got: " ++ show (lookupVar "y" env))
         Left err -> expectationFailure (show err)
 
@@ -196,9 +196,14 @@ testCallExprTyping = do
           case lookupVar "foo" env of
             Just ty ->
               ty
-                `shouldBe` FnT
-                  [IntT, UnionT (Set.fromList [IntT, StringT])]
-                  (UnionT (Set.fromList [IntT, StringT]))
+                `shouldBe` Binding
+                  ( FnT
+                      [ Binding IntT Immutable,
+                        Binding (UnionT (Set.fromList [IntT, StringT])) Immutable
+                      ]
+                      (UnionT (Set.fromList [IntT, StringT]))
+                  )
+                  Immutable
             _ -> expectationFailure "Expected TLetStatement"
         Left err -> expectationFailure (show err)
     it "rejects passing Union to Int param" $ do
@@ -224,8 +229,8 @@ testCallExprTyping = do
 
 -- helpers
 
-getLetType :: TStatement -> Maybe Types.Type
-getLetType (TProgram (TLetStatement _ _ _ ty : _)) = Just ty
+getLetType :: TStatement -> Maybe Type
+getLetType (TProgram (TLetStatement _ _ _ ty : _)) = Just $ getType ty
 getLetType _ = Nothing
 
 testLiterals :: Spec
@@ -298,6 +303,6 @@ testLetStatements = describe "Let statements" $ do
   it "let binding is available in subsequent expression" $ do
     case typeCheckerHelper "let x = 5; let y = x;" of
       Right (TProgram stmts, _) -> case stmts of
-        [_, TLetStatement _ _ _ ty] -> ty `shouldBe` IntT
+        [_, TLetStatement _ _ _ ty] -> ty `shouldBe` (Binding IntT Immutable)
         _ -> expectationFailure "Expected two let statements"
       Left err -> expectationFailure (show err)

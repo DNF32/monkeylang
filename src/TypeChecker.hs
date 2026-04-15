@@ -9,7 +9,7 @@ import Data.Map qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Set qualified as Set
 import GHC.ExecutionStack (Location (objectName))
-import Token (Position, Token (..), TokenType (..), getPos)
+import Token (Position, Token (..), TokenType (..), getPos, getToken)
 import Types
 
 -- ============================================================
@@ -332,18 +332,36 @@ typeCheck (CallExpression tok func args) = do
       | length paramTypes /= length tArgs ->
           lift $ Left $ InvalidParam {pos = Just (getPos tok)}
       | otherwise ->
-          let mismatched =
-                [ (expected, got)
-                  | (expected, gotExpr) <- zip paramTypes tArgs,
-                    let got = getType gotExpr,
-                    not (isCompatible got expected)
-                ]
-           in case mismatched of
-                ((expected, got) : _) ->
-                  lift $ Left $ TypeMismatch {expected = expected, got = got, pos = Just (getPos tok)}
+          let results = [(match param gotExpr, gotExpr) | (param, gotExpr) <- zip paramTypes tArgs]
+              mismatched = filter (\(x, _) -> if x /= MatchSuccess then True else False) $ results
+              errorData = map (\(x, y) -> BindingError x (getToken y)) mismatched
+           in case errorData of
+                (x : _) -> lift $ Left $ MissMatchOnCallable errorData
                 [] ->
                   return (TCallExpression tok tFunc tArgs retType)
+    -- let mismatched =
+    --      [ (expected, got)
+    --        | (expected, gotExpr) <- zip paramTypes tArgs,
+    --          let got = getType gotExpr,
+    --          not (isCompatible got expected)
+    --      ]
+    -- in case mismatched of
+    --      ((expected, got) : _) ->
+    --        lift $ Left $ TypeMismatch {expected = expected, got = got, pos = Just (getPos tok)}
+    --      [] ->
+    --        return (TCallExpression tok tFunc tArgs retType)
     _ -> lift $ Left $ NotCallable {gotType = getType tFunc, pos = Just (getPos tok)}
+  where
+    match :: Binding -> TExpression -> MatchResult
+    match (Binding expTy expMut) (TIdentifierLit _ _ (Binding gotTy gotMut)) =
+      let tyRes = isCompatible expTy gotTy
+          mutRes = expMut <= gotMut
+       in case (tyRes, mutRes) of
+            (True, True) -> MatchSuccess
+            (True, False) -> MutabilityIncompatible
+            (False, True) -> TypeIncompatible
+            (False, False) -> IncompatibleBoth
+    match (Binding expTy _) expr = if isCompatible expTy $ getType expr then MatchSuccess else TypeIncompatible
 typeCheck _ = lift (Left $ InvalidParam Nothing)
 
 extendTypeEnv :: [(String, Binding)] -> TypecheckEnv -> TypecheckEnv

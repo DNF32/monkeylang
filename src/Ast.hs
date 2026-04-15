@@ -317,6 +317,23 @@ instance HasType TExpression where
     TFieldAccess {ty = t} -> t
     TStructInitialization {ty = t} -> t
 
+instance HasToken TExpression where
+  getToken = \case
+    TIntLit {tToken = tok} -> tok
+    TFloatLit {tToken = tok} -> tok
+    TStringLit {tToken = tok} -> tok
+    TBoolLit {tToken = tok} -> tok
+    TNullLit {tToken = tok} -> tok
+    TIdentifierLit {tToken = tok} -> tok
+    TPrefixExpression {tToken = tok} -> tok
+    TInfixExpression {tToken = tok} -> tok
+    TFunctionLit {tToken = tok} -> tok
+    TCallExpression {tToken = tok} -> tok
+    TIndexExpression {tToken = tok} -> tok
+    TIfExpression {tToken = tok} -> tok
+    TFieldAccess {token = tok} -> tok
+    TStructInitialization {token = tok} -> tok
+
 data TStatement
   = TProgram {tStatements :: [TStatement]}
   | TLetStatement {tLetToken :: Token, tLetName :: TExpression, tLetValue :: TExpression, tLetBinding :: Binding}

@@ -5,7 +5,7 @@ module Types where
 import Data.List (nub)
 import Data.Map qualified as Map
 import Data.Set qualified as Set
-import Token (Position)
+import Token (Position, Token)
 
 -- ============================================================
 -- Types
@@ -136,7 +136,7 @@ data Binding = Binding
 instance HasType Binding where
   getType (Binding ty _) = ty
 
-data Mutability = Mutable | Immutable
+data Mutability = Immutable | Mutable
   deriving (Eq, Show, Ord)
 
 mapBindingType :: (Type -> Type) -> Binding -> Binding
@@ -159,6 +159,17 @@ data TypeError
   | UndefinedStruct {undefinedName :: String, pos :: Maybe Position}
   | UndefinedField {structName :: String, undefinedFieldName :: String, pos :: Maybe Position}
   | UnreachableNode {message :: String, pos :: Maybe Position}
+  | MissMatchOnCallable {errors :: [BindingError Token]}
+  deriving (Show, Eq)
+
+data MatchResult
+  = TypeIncompatible
+  | MutabilityIncompatible
+  | IncompatibleBoth
+  | MatchSuccess
+  deriving (Eq, Show)
+
+data BindingError a = BindingError {err :: MatchResult, value :: a}
   deriving (Show, Eq)
 
 withPos :: Position -> TypeError -> TypeError
