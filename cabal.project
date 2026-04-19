@@ -1,3 +1,7 @@
-packages: .
+packages:./*.cabal
 
 tests: True
+
+installdir: ./bin
+install-method: copy
+overwrite-policy: always

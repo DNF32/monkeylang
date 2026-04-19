@@ -5,3 +5,7 @@ let factorial = fn(n) {
   return n * factorial(n - 1);
 };
 factorial(5);
+
+let y = 0;
+y = factorial(10);
+y;

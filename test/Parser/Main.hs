@@ -517,7 +517,7 @@ isMinusWithExpr expected (PrefixExpression _ Minus expr) = expr ?== expected
 isMinusWithExpr _ _ = False
 
 identityToken :: Token
-identityToken = Token Illegal (Position 0 0)
+identityToken = Token Illegal (Position 0 0 0)
 
 prettyTest :: String -> IO ()
 prettyTest input =

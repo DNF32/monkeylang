@@ -1,5 +1,6 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 {-# HLINT ignore "Redundant bracket" #-}
@@ -15,12 +16,17 @@ class HasToken a where
   getToken :: a -> Token
   getTokenType :: a -> TokenType
 
-getPos :: (HasToken a) => a -> Position
-getPos = _tokenPosition . getToken
+class HasPos a where
+  getPos :: a -> Position
+  getMaybePos :: a -> Maybe Position
 
 instance HasToken Token where
   getToken = id
   getTokenType (Token ty _) = ty
+
+instance HasPos Token where
+  getPos (Token _ pos) = pos
+  getMaybePos (Token _ pos) = Just (pos)
 
 -- Core types
 data TokenType
@@ -89,7 +95,8 @@ data Number
 
 data Position = Position
   { _line :: Int,
-    _column :: Int
+    _column :: Int,
+    _absPos :: Int
   }
   deriving (Eq, Show)
 
@@ -126,7 +133,7 @@ runLexer :: Lexer a -> LexerState -> Either LexError (a, LexerState)
 runLexer = run
 
 initialState :: String -> LexerState
-initialState input = LexerState {getInput = input, currentPosition = Position {_line = 1, _column = 1}}
+initialState input = LexerState {getInput = input, currentPosition = Position {_line = 1, _column = 1, _absPos = 0}}
 
 -- Basic Combinators
 
@@ -178,9 +185,10 @@ advancePosition c pos = case c of
     pos
       & line %~ (+ 1)
       & column .~ 1
+      & absPos %~ (+ 1)
   '\r' -> pos
-  '\t' -> pos & column %~ (+ tabWidth)
-  _ -> pos & column %~ (+ 1)
+  '\t' -> pos & column %~ (+ tabWidth) & absPos %~ (+ tabWidth)
+  _ -> pos & column %~ (+ 1) & absPos %~ (+ 1)
   where
     tabWidth = 4 -- configurable
 

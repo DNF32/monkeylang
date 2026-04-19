@@ -1,7 +1,7 @@
 module Main where
 
 import Data.List (intercalate)
-import Eval (Object)
+import Eval (Object, toSourceCode)
 import Eval qualified as MyLib
 import MyLib qualified
 import System.Environment (getArgs)
@@ -12,4 +12,10 @@ main = do
   fileName <- getArgs
   contents <- readFile (head fileName)
   let obj = MyLib.interpreter contents
-  putStrLn (show obj)
+
+  sourceCode <- case obj of
+    MyLib.ErrorObj err -> do
+      src <- toSourceCode (head fileName) err
+      pure (src ++ "\n" ++ show obj)
+    _ -> pure (show obj)
+  putStrLn (sourceCode)

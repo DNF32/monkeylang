@@ -1,0 +1,16 @@
+Struct Point{
+x : Int
+y : Int
+}
+
+let addPoint= fn(x: Point, y: Point): Point{
+      return Point{x: x.x + y.x; y: x.y+y.y };
+}
+
+let x = Point{x: 1; y : 2}
+let y = Point{x: -1; y : 3}
+
+y = res;
+
+
+

@@ -4,6 +4,7 @@ import Ast (Expression (..), FieldDecl (fieldName), FieldInitialization (..), Pa
 import Control.Lens
 import Control.Monad (forM)
 import Control.Monad.State
+import Data.IntMap (assocs)
 import Data.List (intercalate)
 import Data.Map qualified as Map
 import Parser (AstParserError (..), ParserError (..), getCurrentPosition, parseProgram, runAstParser)
@@ -71,13 +72,41 @@ data EvalError
   | DivisionByZero {pos :: Maybe Position}
   | ParseError {message :: String, pos :: Maybe Position} -- NEW
   | InvalidFunctionParameter {pos :: Maybe Position}
+  | FaildAssigment {varName :: String, pos :: Maybe Position}
   | InvalidFunctionCall {pos :: Maybe Position}
   | UndefinedFunction {varName :: String, pos :: Maybe Position}
   | InvalidIndexTarget {got :: String, pos :: Maybe Position} -- indexing a non-array
   | InvalidIndexType {expected :: String, got :: String, pos :: Maybe Position}
   | IndexOutOfBounds {outOfBoundsIndex :: Int, arrayLength :: Int, pos :: Maybe Position}
   | InvalidFieldAcess {objectAccessed :: Object, field :: String, pos :: Maybe Position}
+  | InvalidValueInAssigmentStamtment {got :: String, pos :: Maybe Position}
   deriving (Show, Eq)
+
+instance HasPos EvalError where
+  getMaybePos (TypeError _ pos) = pos
+  getMaybePos (UndefinedVariable _ pos) = pos
+  getMaybePos (DivisionByZero pos) = pos
+  getMaybePos (ParseError _ pos) = pos
+  getMaybePos (InvalidFunctionParameter pos) = pos
+  getMaybePos (FaildAssigment _ pos) = pos
+  getMaybePos (InvalidFunctionCall pos) = pos
+  getMaybePos (UndefinedFunction _ pos) = pos
+  getMaybePos (InvalidIndexTarget _ pos) = pos
+  getMaybePos (InvalidIndexType _ _ pos) = pos
+  getMaybePos (IndexOutOfBounds _ _ pos) = pos
+  getMaybePos (InvalidFieldAcess _ _ pos) = pos
+  getMaybePos (InvalidValueInAssigmentStamtment _ pos) = pos
+
+toSourceCode :: String -> EvalError -> String
+toSourceCode contents err =
+  let ls = lines contents
+   in case getMaybePos err of
+        Just (Position l _ _) ->
+          if l > 0 && l <= length ls
+            then ls !! (l - 1)
+            else "Invalid line number"
+        Nothing ->
+          "No position info"
 
 withPos :: Position -> Object -> Object
 withPos p (ErrorObj err) = ErrorObj (err {pos = Just p})
@@ -149,16 +178,35 @@ voidObj :: Object
 voidObj = VoidObj
 
 hasIdent :: String -> Eval Bool
-hasIdent name = gets (Map.member name)
+hasIdent name = gets (any (Map.member name) . identEnv)
+
+insertObject :: String -> Object -> Enviroment -> Enviroment
+insertObject name obj env =
+  env
+    { identEnv =
+        case identEnv env of
+          [] -> [Map.singleton name obj]
+          (scope : rest) -> Map.insert name obj scope : rest
+    }
 
 setObject :: String -> Object -> Eval ()
-setObject name obj = modify (Map.insert name obj)
+setObject name obj = modify (insertObject name obj)
+
+assignObject :: String -> Object -> Eval Object
+assignObject name obj = do
+  env <- get
+  let env' = assignVar name obj env
+   in case env' of
+        Just env'' -> do
+          put env''
+          return obj
+        Nothing -> return $ ErrorObj (FaildAssigment {pos = Nothing, varName = name})
 
 getObject :: String -> Eval (Maybe Object)
-getObject name = gets (Map.lookup name)
+getObject name = gets (lookupVar name)
 
 newEnv :: Enviroment
-newEnv = Map.empty
+newEnv = EvalEnv [] []
 
 initialEnv :: Eval ()
 initialEnv = put newEnv
@@ -175,6 +223,7 @@ evalProgram' [] = return voidObj
 evalProgram' [s] = case s of
   LetStatement {} -> evalLetStatement s
   ReturnStatement {} -> evalReturnStatement s
+  AssignmentStatement {} -> evalAssignmentStatement s
   ExpressionStatement {} -> do
     obj <- evalExpressionStatement s
     case obj of
@@ -188,6 +237,7 @@ evalProgram' (s1 : ss) = do
       _ <- evalLetStatement s1
       evalProgram' ss
     ReturnStatement {} -> evalReturnStatement s1
+    AssignmentStatement {} -> evalAssignmentStatement s1
     ExpressionStatement {} -> do
       obj <- evalExpressionStatement s1
       case obj of
@@ -229,14 +279,23 @@ evalLetStatement (LetStatement _ (IdentifierLit _ name) value _ _) = do
   case obj of
     ErrorObj _ -> return obj
     FunctionObj params body capturedEnv -> do
-      let selfEnv = Map.insert name (FunctionObj params body selfEnv) capturedEnv
-          updatedObj = FunctionObj params body selfEnv
+      let recursiveEnv = defineVar name (FunctionObj params body recursiveEnv) capturedEnv
+          updatedObj = FunctionObj params body recursiveEnv
       setObject name updatedObj
       return updatedObj
     _ -> do
       setObject name obj
       return obj
 evalLetStatement s = error $ "evalLetStatement called with non-LetStatement: " ++ show s
+
+evalAssignmentStatement :: Statement -> Eval Object
+evalAssignmentStatement (AssignmentStatement tok (IdentifierLit _ name) value) = do
+  obj <- unwrapReturnObj <$> evalExpression value
+  case obj of
+    ErrorObj _ -> return obj
+    FunctionObj {} -> return (ErrorObj (InvalidValueInAssigmentStamtment "Got Function object on the right hand side of assignment statement" $ Just $ getPos tok))
+    _ -> do
+      assignObject name obj
 
 evalReturnStatement :: Statement -> Eval Object
 evalReturnStatement (ReturnStatement _ expr) = do

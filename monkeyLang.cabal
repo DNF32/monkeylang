@@ -191,6 +191,7 @@ test-suite eval
                     monkeyLang,
                     containers,
                     hspec ^>=2.10,
+                    hspec-expectations ^>=0.8.2,
                     QuickCheck ^>=2.14,
                     lens,
                     mtl ^>=2.3.1

@@ -28,7 +28,7 @@ module Ast
 where
 
 import Data.List (intercalate)
-import Token (HasToken (..), Position (..), Token (..), TokenType (..))
+import Token (HasPos (..), HasToken (..), Position (..), Token (..), TokenType (..))
 import Types
 
 type Operator = TokenType
@@ -80,6 +80,11 @@ exprToken expr =
 
 instance HasToken Expression where
   getToken = exprToken
+  getTokenType = getTokenType . exprToken
+
+instance HasPos Expression where
+  getPos expr = getPos $ exprToken expr
+  getMaybePos expr = Just $ getPos expr
 
 data FieldInitialization = FieldInit
   { initToken :: Token,
