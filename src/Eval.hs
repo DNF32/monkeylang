@@ -19,7 +19,48 @@ safeIndex xs i
   | i < 0 || i >= length xs = Nothing
   | otherwise = Just (xs !! i)
 
-type Enviroment = Map.Map String Object
+data Enviroment = EvalEnv
+  { identEnv :: [Map.Map String Object],
+    funcEnv :: [Map.Map String Object]
+  }
+  deriving (Show, Eq)
+
+pushScope :: Enviroment -> Enviroment
+pushScope env =
+  env {identEnv = Map.empty : identEnv env}
+
+popScope :: Enviroment -> Enviroment
+popScope env =
+  case identEnv env of
+    [] -> env
+    (_ : rest) -> env {identEnv = rest}
+
+lookupVar :: String -> Enviroment -> Maybe Object
+lookupVar name env = go (identEnv env)
+  where
+    go [] = Nothing
+    go (scope : rest) =
+      case Map.lookup name scope of
+        Just ty -> Just ty
+        Nothing -> go rest
+
+defineVar :: String -> Object -> Enviroment -> Enviroment
+defineVar name obj env =
+  case identEnv env of
+    [] -> env {identEnv = [Map.singleton name obj]}
+    (scope : rest) -> env {identEnv = Map.insert name obj scope : rest}
+
+assignVar :: String -> Object -> Enviroment -> Maybe Enviroment
+assignVar name obj env = go (identEnv env)
+  where
+    go [] = Nothing
+    go (scope : rest)
+      | Map.member name scope =
+          Just env {identEnv = Map.insert name obj scope : rest}
+      | otherwise =
+          case go rest of
+            Just updatedEnv -> Just updatedEnv
+            Nothing -> Nothing
 
 type Eval a = State Enviroment a
 
@@ -383,8 +424,12 @@ functionEval params body env args
           return (unwrapReturnObj result)
 
 extendedEnv :: Enviroment -> [Param] -> [Object] -> Enviroment
-extendedEnv env params evaluatedArgs =
-  Map.union (Map.fromList [(name, obj) | (Param _ name _ _, obj) <- zip params evaluatedArgs]) env
+extendedEnv env params evaluatedArgs = foldl step (pushScope env) (zip params evaluatedArgs)
+  where
+    extract :: (Param, Object) -> (String, Object)
+    extract (Param _ name _ _, obj) = (name, obj)
+    step :: Enviroment -> (Param, Object) -> Enviroment
+    step env t = uncurry defineVar (extract t) env
 
 isError :: Object -> Bool
 isError (ErrorObj _) = True
