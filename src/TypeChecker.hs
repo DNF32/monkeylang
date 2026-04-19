@@ -3,13 +3,15 @@
 
 module TypeChecker where
 
-import Ast (Binding (..), Expression (..), FieldDecl (FieldDecl, fieldName), FieldInitialization (FieldInit), Param (..), Statement (..), TExpression (..), TFieldInitialization (TFieldInit), TParam (..), TStatement (..), getType)
+import Ast (Expression (..), FieldDecl (..), FieldInitialization (FieldInit), Param (..), Statement (..), TExpression (..), TFieldInitialization (TFieldInit), TParam (..), TStatement (..))
 import Control.Monad.State (MonadState (get), StateT, gets, lift, modify, put)
+import Control.Monad.State.Lazy
 import Data.Map qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Set qualified as Set
 import GHC.ExecutionStack (Location (objectName))
-import Token (Position, Token (..), TokenType (..), getPos, getToken)
+import Parser
+import Token (Position, Token (..), TokenType (..), getPos, getToken, initialState)
 import Types
 
 -- ============================================================
@@ -17,7 +19,15 @@ import Types
 -- ============================================================
 --
 --
---
+typeChecker :: String -> Either TypeError (TStatement, TypecheckEnv)
+typeChecker program =
+  let state = initialState program
+   in case runAstParser parseProgram state of
+        Right (prog@(Program _), _) ->
+          runStateT (do newProg <- structResolutionPhase prog; statementTypeChecker newProg) emptyEnv
+        Left parseErr ->
+          Left $ InternalError {message = show parseErr, pos = Nothing}
+
 structResolutionPhase :: Statement -> Check Statement
 structResolutionPhase prog@(Program stms) = do
   prog' <- collectStructDecl prog
