@@ -13,12 +13,14 @@ import SimpleParser
 
 class HasToken a where
   getToken :: a -> Token
+  getTokenType :: a -> TokenType
 
 getPos :: (HasToken a) => a -> Position
 getPos = _tokenPosition . getToken
 
 instance HasToken Token where
   getToken = id
+  getTokenType (Token ty _) = ty
 
 -- Core types
 data TokenType

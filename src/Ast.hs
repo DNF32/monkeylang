@@ -108,6 +108,7 @@ infix 4 ?==
 data Statement
   = Program {statements :: [Statement]}
   | LetStatement {stmtToken :: Token, name :: Expression, value :: Expression, ann :: Maybe Type, mutPer :: Mutability}
+  | AssignmentStatement {stmtToken :: Token, name :: Expression, value :: Expression}
   | ReturnStatement {stmtToken :: Token, result :: Expression}
   | ExpressionStatement {stmtToken :: Token, expr :: Expression}
   | BlockStatement {statements :: [Statement]}

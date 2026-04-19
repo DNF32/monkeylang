@@ -23,6 +23,8 @@ main = hspec $ do
   callExpr
   structDecl
   structInit
+  fieldAccess
+  assignmentStatement
 
 specOpPrecedence :: Spec
 specOpPrecedence = do
@@ -81,7 +83,7 @@ spec = do
             expectationFailure ("Parser failed: " ++ show err)
           Right (Program stmts, _) ->
             case head stmts of
-              LetStatement _ (IdentifierLit _ "x") _ _ -> return ()
+              LetStatement _ (IdentifierLit _ "x") _ (Just IntT) Immutable -> return ()
               stmt -> expectationFailure ("Expected LetStatement with type hint, got: " ++ statementToString stmt)
     describe "return statement" $ do
       let testCases =
@@ -183,7 +185,7 @@ literalTest = do
               parameters
                 `shouldSatisfy` ( \ps ->
                                     length ps == 2
-                                      && and (zipWith (?==) ps [Param identityToken "x" Nothing, Param identityToken "y" Nothing])
+                                      && and (zipWith (?==) ps [Param identityToken "x" AnyT Immutable, Param identityToken "y" AnyT Immutable])
                                 )
               length body `shouldBe` 1
               case head body of
@@ -204,7 +206,7 @@ literalTest = do
               parameters
                 `shouldSatisfy` ( \ps ->
                                     length ps == 2
-                                      && and (zipWith (?==) ps [Param identityToken "x" (Just IntT), Param identityToken "y" Nothing])
+                                      && and (zipWith (?==) ps [Param identityToken "x" IntT Immutable, Param identityToken "y" AnyT Immutable])
                                 )
               length body `shouldBe` 1
               case head body of
@@ -395,6 +397,20 @@ fieldAccess = do
             ExpressionStatement _ (FieldAccess _ (IndexExpression _ (IdentifierLit _ "foo") (IntLit _ 0)) "bar") ->
               pure ()
             _ -> expectationFailure ("Expected FieldAccess(IndexExpression), got: " ++ show (head stmts))
+
+assignmentStatement :: Spec
+assignmentStatement = do
+  describe "parsing an assignmentStatement " $ do
+    -- Simple field access: foo.bar
+    it "parses simple assignmentStatement" $ do
+      let state = initialState "x = 10;"
+      case runAstParser parseProgram state of
+        Left err -> expectationFailure ("Parser failed: " ++ show err)
+        Right (Program stmts, _) ->
+          case head stmts of
+            AssignmentStatement _ (IdentifierLit _ name) _ -> do
+              name `shouldBe` "x"
+            _ -> expectationFailure ("Expected FieldAccess found: " ++ show (head stmts))
 
 testLetStatementSpec :: String -> (Expression -> Bool) -> Statement -> Spec
 testLetStatementSpec expectedId exprPredicate parsedStatement = do

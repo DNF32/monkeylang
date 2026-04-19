@@ -78,6 +78,14 @@ peekToken = SimpleParser $ \state ->
     Right (tok, _) -> Right (tok, state) -- Don't consume, just peek
     Left err -> Left (TokenError err)
 
+peekTwoAheadToken :: AstParser Token
+peekTwoAheadToken = SimpleParser $ \state ->
+  case runLexer tokenizer state of
+    Right (tok, state') -> case runLexer tokenizer state' of
+      Right (secondTok, state'') -> Right (secondTok, state)
+      Left err -> Left (TokenError err)
+    Left err -> Left (TokenError err)
+
 getCurrentPosition :: AstParser Position
 getCurrentPosition = SimpleParser $ \state -> Right (currentPosition state, state)
 
@@ -372,6 +380,14 @@ parseLetStatement = do
   _ <- optional (isToken Semicolon)
   return (LetStatement tok identifier expr hint permission)
 
+parseAssignmentStatement :: AstParser Statement
+parseAssignmentStatement = do
+  identifier <- parseIdentifierExpression
+  _ <- isToken Assign
+  expr <- parseExpressionRbp LOWEST
+  _ <- optional (isToken Semicolon)
+  return (AssignmentStatement (getToken identifier) identifier expr)
+
 parseTypeHint :: AstParser Type
 parseTypeHint = do
   _ <- isToken Colon
@@ -484,14 +500,16 @@ parseExpressionStatement token = ExpressionStatement <$> pure token <*> parseExp
 parseStatement :: TokenType -> AstParser (Maybe Statement)
 parseStatement endToken = do
   pTok <- peekToken
-  case pTok of
-    tok@(Token tt _) -> do
-      case tt of
+  ppTok <- peekTwoAheadToken
+  let tt = getTokenType pTok
+   in case tt of
         Let -> fmap Just parseLetStatement
         Return -> fmap Just parseReturnStatement
         StructType -> fmap Just parseStructDecl
         _ | tt == endToken -> pure Nothing
-        _ -> fmap Just (parseExpressionStatement tok)
+        _ -> case getTokenType ppTok of
+          Assign -> fmap Just parseAssignmentStatement
+          _ -> fmap Just (parseExpressionStatement pTok)
 
 parseStatementInScope :: TokenType -> AstParser (Maybe Statement)
 parseStatementInScope endToken = do
