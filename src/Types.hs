@@ -57,6 +57,7 @@ isCompatible inferred annotated =
       Set.member t setAnnotated
     (UnionT setInferred, t) ->
       Set.member t setInferred && Set.size setInferred == 1
+    (AnyT, _) -> True
     (t1, t2) -> t1 == t2 -- otherwise exact match
 
 intersect :: Type -> Type -> Bool

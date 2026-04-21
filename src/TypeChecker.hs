@@ -349,17 +349,7 @@ typeCheck (CallExpression tok func args) = do
                 (x : _) -> lift $ Left $ MissMatchOnCallable errorData
                 [] ->
                   return (TCallExpression tok tFunc tArgs retType)
-    -- let mismatched =
-    --      [ (expected, got)
-    --        | (expected, gotExpr) <- zip paramTypes tArgs,
-    --          let got = getType gotExpr,
-    --          not (isCompatible got expected)
-    --      ]
-    -- in case mismatched of
-    --      ((expected, got) : _) ->
-    --        lift $ Left $ TypeMismatch {expected = expected, got = got, pos = Just (getPos tok)}
-    --      [] ->
-    --        return (TCallExpression tok tFunc tArgs retType)
+    AnyT -> return (TCallExpression tok tFunc tArgs AnyT)
     _ -> lift $ Left $ NotCallable {gotType = getType tFunc, pos = Just (getPos tok)}
   where
     match :: Binding -> TExpression -> MatchResult
