@@ -16,9 +16,14 @@ main = do
   case (head args) of
     "--check" -> do
       contents <- readFile (args !! 1)
-      case typeChecker contents of
-        Left err -> putStrLn (show err)
-        Right (_, env) -> putStrLn "No error "
+      let check = typeChecker contents
+      let sourceCode = case check of
+            Left err ->
+              let src = toSourceCodeTypeChecker (contents) err
+               in (src ++ "\n" ++ show err)
+            Right (_, env) -> "No error "
+
+      putStrLn (sourceCode)
     _ -> do
       contents <- readFile (head args)
       let obj = interpreter contents

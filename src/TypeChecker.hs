@@ -11,7 +11,7 @@ import Data.Maybe (fromMaybe)
 import Data.Set qualified as Set
 import GHC.ExecutionStack (Location (objectName))
 import Parser
-import Token (Position, Token (..), TokenType (..), getPos, getToken, initialState)
+import Token (HasPos (getMaybePos), Position (..), Token (..), TokenType (..), getPos, getToken, initialState)
 import Types
 
 -- ============================================================
@@ -723,3 +723,17 @@ canBeFalsy StringT = True -- String can be empty (falsy)
 canBeFalsy (ArrayT _) = True -- Array can be empty (falsy)
 canBeFalsy VoidT = True -- Void is falsy
 canBeFalsy _ = True -- Others: assume can be falsy
+
+toSourceCodeTypeChecker :: String -> TypeError -> String
+toSourceCodeTypeChecker contents err =
+  let ls = lines contents
+   in case getMaybePos err of
+        Just (Position l c _) ->
+          if l > 0 && l <= length ls
+            then ls !! (l - 1)
+            else "Invalid line number"
+        Nothing ->
+          "No position info"
+  where
+    interpolate :: Int -> String -> String
+    interpolate col str = (take (col - 1) str) ++ "~" ++ (str !! col) ++ "~" ++ drop (col - 1) str

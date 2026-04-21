@@ -5,7 +5,7 @@ module Types where
 import Data.List (nub)
 import Data.Map qualified as Map
 import Data.Set qualified as Set
-import Token (Position, Token)
+import Token (HasPos (..), Position (..), Token)
 
 -- ============================================================
 -- Types
@@ -162,6 +162,23 @@ data TypeError
   | UnreachableNode {message :: String, pos :: Maybe Position}
   | MissMatchOnCallable {errors :: [BindingError Token]}
   deriving (Show, Eq)
+
+instance HasPos TypeError where
+  getPos err =
+    case getMaybePos err of
+      Just p -> p
+      Nothing -> Position 0 0 0
+
+  getMaybePos (TypeMismatch _ _ p) = p
+  getMaybePos (UndefinedVariable _ p _) = p
+  getMaybePos (NotCallable _ p) = p
+  getMaybePos (InvalidParam p) = p
+  getMaybePos (OperatorNotDefined _ _ _ p) = p
+  getMaybePos (InternalError _ p) = p
+  getMaybePos (UndefinedStruct _ p) = p
+  getMaybePos (UndefinedField _ _ p) = p
+  getMaybePos (UnreachableNode _ p) = p
+  getMaybePos (MissMatchOnCallable _) = Nothing
 
 data MatchResult
   = TypeIncompatible
