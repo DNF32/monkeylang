@@ -343,6 +343,7 @@ instance HasToken TExpression where
 data TStatement
   = TProgram {tStatements :: [TStatement]}
   | TLetStatement {tLetToken :: Token, tLetName :: TExpression, tLetValue :: TExpression, tLetBinding :: Binding}
+  | TAssignmentStatement {stmtToken :: Token, name :: TExpression, value :: TExpression, tAssBinding :: Binding}
   | TReturnStatement {tReturnToken :: Token, tResult :: TExpression}
   | TExpressionStatement {tStmtToken :: Token, tExpr :: TExpression}
   | TBlockStatement {tBlockStatements :: [TStatement]}

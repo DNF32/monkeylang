@@ -6,7 +6,10 @@ module TypeChecker where
 import Ast (Expression (..), FieldDecl (..), FieldInitialization (FieldInit), Param (..), Statement (..), TExpression (..), TFieldInitialization (TFieldInit), TParam (..), TStatement (..))
 import Control.Monad.State (MonadState (get), StateT, gets, lift, modify, put)
 import Control.Monad.State.Lazy
+import Data.Bifunctor (first)
+import Data.IntMap.Merge.Lazy (zipWithMatched)
 import Data.Map qualified as Map
+import Data.Map.Merge.Strict qualified as Merge
 import Data.Maybe (fromMaybe)
 import Data.Set qualified as Set
 import GHC.ExecutionStack (Location (objectName))
@@ -155,39 +158,57 @@ typeCheck (IfExpression tok condition consequence alternative) = do
       put falseEnv
       return $ TIfExpression tok tCondition Nothing (Just tStmt) ifExprTy
     (BranchNode tConsequence truthEnv truthNodeType, BranchNode tAlternative falseEnv falseNodeType) -> do
-      put baseEnv
-      ifExprTy <-
-        simplifyRetTy . (: [])
+      (ifExprTy, newEnv) <-
+        first (simplifyRetTy . (: []))
           <$> ( case (truthNodeType, falseNodeType) of
                   -- both branches return: if-expression never produces a value
                   (Ret _, Ret _) ->
-                    return NeverT
-                  -- one branch returns, the other yields a value
+                    return (NeverT, baseEnv) -- we dont even need an even since there cant be any exec after
+                    -- one branch returns, the other yields a value
                   (Expr ty, Ret _) ->
-                    return ty
+                    return (ty, truthEnv)
                   (Ret _, Expr ty) ->
-                    return ty
+                    return (ty, falseEnv)
                   -- one branch returns, the other yields unit
                   (Void, Ret _) ->
-                    return VoidT
+                    return (VoidT, truthEnv)
                   (Ret _, Void) ->
-                    return VoidT
+                    return (VoidT, falseEnv)
                   -- both branches yield values: must match
                   (Expr ty1, Expr ty2)
                     | ty1 == ty2 ->
-                        return ty1
+                        return (ty1, mergeEnvs baseEnv truthEnv falseEnv)
                     | otherwise ->
                         lift $ Left $ TypeMismatch {expected = ty1, got = ty2, pos = Just (getPos tok)}
                   -- both branches yield unit
                   (Void, Void) ->
-                    return VoidT
+                    return (VoidT, mergeEnvs baseEnv truthEnv falseEnv)
                   -- mixed value/unit is a type error (Rust-like)
                   (Expr ty, Void) ->
                     lift $ Left $ TypeMismatch {expected = ty, got = VoidT, pos = Just (getPos tok)}
                   (Void, Expr ty) ->
                     lift $ Left $ TypeMismatch {expected = VoidT, got = ty, pos = Just (getPos tok)}
               )
+      put newEnv
       return $ TIfExpression tok tCondition (Just tConsequence) (Just tAlternative) ifExprTy
+  where
+    mergeEnvs :: TypecheckEnv -> TypecheckEnv -> TypecheckEnv -> TypecheckEnv
+    mergeEnvs baseEnv (TypecheckEnv tyEnv _ _ _ fieldEnv) (TypecheckEnv ty'Env _ _ _ field'Env) = baseEnv {typeEnv = mergeScopes tyEnv ty'Env, fieldEnv = mergeField fieldEnv field'Env}
+
+    mergeScopes :: [TypeEnv] -> [TypeEnv] -> [TypeEnv]
+    mergeScopes = zipWith mergeScope
+
+    mergeScope :: TypeEnv -> TypeEnv -> TypeEnv
+    mergeScope = Merge.merge Merge.preserveMissing Merge.preserveMissing (Merge.zipWithMatched matchBinding)
+
+    mergeField :: Map.Map (String, String) Type -> Map.Map (String, String) Type -> Map.Map (String, String) Type
+    mergeField = Merge.merge Merge.preserveMissing Merge.preserveMissing (Merge.zipWithMatched matchField)
+
+    matchField :: (String, String) -> Type -> Type -> Type
+    matchField _ ty ty' = simplifyRetTy $ [ty, ty']
+
+    matchBinding :: String -> Binding -> Binding -> Binding
+    matchBinding _ (Binding ty mut) (Binding tyy mutt) = Binding (simplifyRetTy [ty, tyy]) mut
 --  outputEnv <- lift $ case (tConsequence ,tAlternative) of
 --    (Nothing, Nothing)->
 --    (tConsequence , Nothing) -> if truthHasReturn
@@ -462,6 +483,13 @@ statementTypeChecker (ReturnStatement tok expr) = do
   typedExpr <- typeCheck expr
   modify (pushRetTy (getType typedExpr))
   return (TReturnStatement tok typedExpr)
+statementTypeChecker (AssignmentStatement tok (IdentifierLit tok' name) expr) = do
+  maybeBin <- lookupVar name
+  case maybeBin  of
+    Just (Binding ty mut) -> case mut of 
+                              Immutable -> -- this needs to error
+                              Mutable -> if isCompatible ty $ getType expr  then (interction of types) else error
+    Nothing -> -- this needs to error
 statementTypeChecker (ExpressionStatement tok expr) = do
   typedExpr <- typeCheck expr
   return (TExpressionStatement tok typedExpr)
@@ -730,10 +758,16 @@ toSourceCodeTypeChecker contents err =
    in case getMaybePos err of
         Just (Position l c _) ->
           if l > 0 && l <= length ls
-            then ls !! (l - 1)
+            then interpolate c (ls !! (l - 1))
             else "Invalid line number"
         Nothing ->
           "No position info"
   where
     interpolate :: Int -> String -> String
-    interpolate col str = (take (col - 1) str) ++ "~" ++ (str !! col) ++ "~" ++ drop (col - 1) str
+    interpolate col str
+      | null str = "~~"
+      | col <= 0 = "~" ++ str
+      | col > length str = str ++ "~"
+      | otherwise =
+          let i = col - 1
+           in take i str ++ "~" ++ [str !! i] ++ "~" ++ drop (i + 1) str
