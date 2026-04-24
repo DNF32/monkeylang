@@ -485,11 +485,17 @@ statementTypeChecker (ReturnStatement tok expr) = do
   return (TReturnStatement tok typedExpr)
 statementTypeChecker (AssignmentStatement tok (IdentifierLit tok' name) expr) = do
   maybeBin <- lookupVar name
-  case maybeBin  of
+  case maybeBin of
     Just (Binding ty mut) -> case mut of 
-                              Immutable -> -- this needs to error
-                              Mutable -> if isCompatible ty $ getType expr  then (interction of types) else error
-    Nothing -> -- this needs to error
+                              Immutable -> lift $ Left $ TriedToAssingOnImmutable {var = name, pos = Just $ getPos tok'}
+                              Mutable -> let inter = intersect ty $ getType expr  
+                                          in case inter of
+                                            Just interTy -> do
+                                              tExpr <- typecheck expr
+                                              return $ TAssignmentStatement tok, (TIdentifierLit tok' name interTy) tExpr Binding interTy mut
+                                            Nothing -> lift $ Left $ TypeMismatch {got = getType expr, expected = ty, pos = getPos tok'}
+    Nothing -> lift $ Left $ UndefinedVariable{varName = name, pos = Just $ getPos tok', localMessage = Just $ "Tried to assign on non declared variable"}
+statementTypeChecker (AssignmentStatement tok lvalue expr) = return Left $ 
 statementTypeChecker (ExpressionStatement tok expr) = do
   typedExpr <- typeCheck expr
   return (TExpressionStatement tok typedExpr)

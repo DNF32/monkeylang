@@ -26,6 +26,48 @@ data Type
   | AnyT
   deriving (Show, Eq, Ord)
 
+
+intersect :: Type -> Type -> Maybe Type
+intersect (UnionT set1) (UnionT set2) = 
+    let inter = Set.intersection set1 set2
+    in if Set.null inter 
+       then Nothing 
+       else Just $ UnionT inter
+
+intersect (UnionT set1) ty = 
+    if Set.member ty set1 
+    then Just ty 
+    else Nothing
+
+intersect ty (UnionT set2) = 
+    if Set.member ty set2 
+    then Just ty 
+    else Nothing
+
+intersect AnyT ty = Just ty
+intersect ty AnyT = Just ty
+
+intersect NeverT _ = Just NeverT
+intersect _ NeverT = Just NeverT
+
+intersect (ArrayT t1) (ArrayT t2) = 
+    case intersect t1 t2 of
+        Nothing -> Nothing
+        Just t  -> Just $ ArrayT t
+
+
+intersect (StructT n1) (StructT n2) =
+    if n1 == n2 then Just (StructT n1) else Nothing
+
+intersect NullT NullT   = Just NullT
+intersect IntT IntT     = Just IntT
+intersect BoolT BoolT   = Just BoolT
+intersect FloatT FloatT = Just FloatT
+intersect StringT StringT = Just StringT
+intersect VoidT VoidT   = Just VoidT
+
+-- Different primitive types have no intersection
+intersect _ _ = Nothing
 newtype RetTypes = RetTypes {unRetTypes :: [Type]}
   deriving (Show, Eq)
 
@@ -161,6 +203,7 @@ data TypeError
   | UndefinedField {structName :: String, undefinedFieldName :: String, pos :: Maybe Position}
   | UnreachableNode {message :: String, pos :: Maybe Position}
   | MissMatchOnCallable {errors :: [BindingError Token]}
+  | TriedToAssingOnImmutable {var:: String, pos:: Maybe Position}
   deriving (Show, Eq)
 
 instance HasPos TypeError where
