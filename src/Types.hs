@@ -102,16 +102,11 @@ isCompatible inferred annotated =
     (AnyT, _) -> True
     (t1, t2) -> t1 == t2 -- otherwise exact match
 
-intersect :: Type -> Type -> Bool
-intersect t1 t2 =
-  case (t1, t2) of
-    (UnionT t1, UnionT t2) ->
-      not . Set.null $ Set.intersection t1 t2
-    (UnionT t1, t2) ->
-      Set.member t2 t1
-    (t1, UnionT t2) ->
-      Set.member t1 t2
-    (t1, t2) -> t1 == t2
+intersects :: Type -> Type -> Bool
+intersects t1 t2 =
+  case intersectType t1 t2 of
+    Just _ -> True
+    Nothing -> False
 
 intersectType :: Type -> Type -> Maybe Type
 intersectType t1 t2 =
@@ -171,13 +166,13 @@ class HasType a where
   getType :: a -> Type
 
 data Binding = Binding
-  { bindTy :: Type,
-    bindMutable :: Mutability
+  { bindMutable :: Mutability,
+    bindTy :: Type
   }
   deriving (Eq, Show, Ord)
 
 instance HasType Binding where
-  getType (Binding ty _) = ty
+  getType (Binding _ ty) = ty
 
 data Mutability = Immutable | Mutable
   deriving (Eq, Show, Ord)
@@ -300,7 +295,7 @@ updateVar name t env = env {typeEnv = go (typeEnv env)}
   where
     go [] = error ("updateVar: variable not found: " ++ name)
     go (scope : rest)
-      | Map.member name scope = Map.adjust (\(Binding _ per) -> (Binding t per)) name scope : rest
+      | Map.member name scope = Map.adjust (\(Binding per _) -> (Binding per t)) name scope : rest
       | otherwise = scope : go rest
 
 defineBinding :: String -> Binding -> TypecheckEnv -> TypecheckEnv
@@ -341,7 +336,7 @@ builtInParamType =
   let primitive = Set.fromList [IntT, StringT, BoolT, FloatT, NullT, VoidT]
       arrayType = ArrayT (UnionT primitive)
       generalType = UnionT (Set.insert arrayType primitive)
-   in (Binding generalType Immutable)
+   in (Binding Immutable generalType)
 
 typeCheckingBuiltIns :: [(String, Type)]
 typeCheckingBuiltIns =

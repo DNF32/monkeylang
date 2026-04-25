@@ -208,7 +208,7 @@ typeCheck (IfExpression tok condition consequence alternative) = do
     matchField _ ty ty' = simplifyRetTy $ [ty, ty']
 
     matchBinding :: String -> Binding -> Binding -> Binding
-    matchBinding _ (Binding ty mut) (Binding tyy mutt) = Binding (simplifyRetTy [ty, tyy]) mut
+    matchBinding _ (Binding mut ty) (Binding _ tyy) = Binding mut (simplifyRetTy [ty, tyy])
 --  outputEnv <- lift $ case (tConsequence ,tAlternative) of
 --    (Nothing, Nothing)->
 --    (tConsequence , Nothing) -> if truthHasReturn
@@ -354,7 +354,7 @@ typeCheck (FunctionLit tok params returnType body) = do
       finalTy <- resolveType ty
       return (TParam t n finalTy mut)
     paramToBinding :: TParam -> Binding
-    paramToBinding (TParam t n ty mut) = Binding ty mut
+    paramToBinding (TParam _ _ ty mut) = Binding mut ty
 typeCheck (CallExpression tok func args) = do
   tFunc <- typeCheck func
   tArgs <- mapM typeCheck args
@@ -374,7 +374,7 @@ typeCheck (CallExpression tok func args) = do
     _ -> lift $ Left $ NotCallable {gotType = getType tFunc, pos = Just (getPos tok)}
   where
     match :: Binding -> TExpression -> MatchResult
-    match (Binding expTy expMut) (TIdentifierLit _ _ (Binding gotTy gotMut)) =
+    match (Binding expMut expTy) (TIdentifierLit _ _ (Binding gotMut gotTy)) =
       let tyRes = isCompatible expTy gotTy
           mutRes = expMut <= gotMut
        in case (tyRes, mutRes) of
@@ -382,7 +382,7 @@ typeCheck (CallExpression tok func args) = do
             (True, False) -> MutabilityIncompatible
             (False, True) -> TypeIncompatible
             (False, False) -> IncompatibleBoth
-    match (Binding expTy _) expr = if isCompatible expTy $ getType expr then MatchSuccess else TypeIncompatible
+    match (Binding _ expTy) expr = if isCompatible expTy $ getType expr then MatchSuccess else TypeIncompatible
 typeCheck _ = lift (Left $ InvalidParam Nothing)
 
 extendTypeEnv :: [(String, Binding)] -> TypecheckEnv -> TypecheckEnv
@@ -418,10 +418,10 @@ resolveType (ArrayT elemType) = do
 resolveType (FnT paramTypes retType) = do
   resolvedParamTypes <-
     traverse
-      ( \(Binding t mut) ->
+      ( \(Binding mut t) ->
           do
             resTy <- resolveType t
-            return (Binding resTy mut)
+            return (Binding mut resTy)
       )
       paramTypes
   resolvedRetType <- resolveType retType
@@ -474,28 +474,33 @@ statementTypeChecker (LetStatement tok (IdentifierLit identtok@(Token tType pos)
     Just annType
       | not (isCompatible typeExpr annType) -> lift (Left $ TypeMismatch {expected = annType, got = typeExpr, pos = Just pos})
       | otherwise -> do
-          modify (defineBinding name (Binding annType mutPer))
-          return (TLetStatement tok (TIdentifierLit identtok name (Binding annType mutPer)) typedExpr (Binding annType mutPer))
+          modify (defineBinding name (Binding mutPer annType))
+          return (TLetStatement tok (TIdentifierLit identtok name (Binding mutPer annType)) typedExpr (Binding mutPer annType))
     Nothing -> do
-      modify (defineBinding name (Binding typeExpr mutPer))
-      return (TLetStatement tok (TIdentifierLit identtok name (Binding typeExpr mutPer)) typedExpr (Binding typeExpr mutPer))
+      modify (defineBinding name (Binding mutPer typeExpr))
+      return (TLetStatement tok (TIdentifierLit identtok name (Binding mutPer typeExpr)) typedExpr (Binding mutPer typeExpr))
 statementTypeChecker (ReturnStatement tok expr) = do
   typedExpr <- typeCheck expr
   modify (pushRetTy (getType typedExpr))
   return (TReturnStatement tok typedExpr)
 statementTypeChecker (AssignmentStatement tok (IdentifierLit tok' name) expr) = do
-  maybeBin <- lookupVar name
+  baseEnv <- get
+  let maybeBin = lookupVar name baseEnv
   case maybeBin of
-    Just (Binding ty mut) -> case mut of 
-                              Immutable -> lift $ Left $ TriedToAssingOnImmutable {var = name, pos = Just $ getPos tok'}
-                              Mutable -> let inter = intersect ty $ getType expr  
-                                          in case inter of
-                                            Just interTy -> do
-                                              tExpr <- typecheck expr
-                                              return $ TAssignmentStatement tok, (TIdentifierLit tok' name interTy) tExpr Binding interTy mut
-                                            Nothing -> lift $ Left $ TypeMismatch {got = getType expr, expected = ty, pos = getPos tok'}
-    Nothing -> lift $ Left $ UndefinedVariable{varName = name, pos = Just $ getPos tok', localMessage = Just $ "Tried to assign on non declared variable"}
-statementTypeChecker (AssignmentStatement tok lvalue expr) = return Left $ 
+    Just (Binding mut ty) ->
+      case mut of
+        Immutable ->
+          lift $ Left $ TriedToAssingOnImmutable {var = name, pos = Just $ getPos tok'}
+        Mutable -> do
+          tExpr <- typeCheck expr
+          let exprTy = getType tExpr
+          case intersect ty exprTy of
+            Just interTy ->
+              return $ TAssignmentStatement tok (TIdentifierLit tok' name (Binding mut interTy)) tExpr (Binding mut interTy)
+            Nothing ->
+              lift $ Left $ TypeMismatch {got = exprTy, expected = ty, pos = Just $ getPos tok'}
+    Nothing ->
+      lift $ Left $ UndefinedVariable {varName = name, pos = Just $ getPos tok', localMessage = Just $ "Tried to assign on non declared variable"}
 statementTypeChecker (ExpressionStatement tok expr) = do
   typedExpr <- typeCheck expr
   return (TExpressionStatement tok typedExpr)
@@ -521,7 +526,7 @@ statementTypeChecker (BlockStatement stmts) = do
 --
 --
 branchEnv :: TypecheckEnv -> TExpression -> (Maybe TypecheckEnv, Maybe TypecheckEnv)
-branchEnv initialEnv (TIdentifierLit tok name (Binding ty _)) = do
+branchEnv initialEnv (TIdentifierLit tok name (Binding _ ty)) = do
   let truthTy = truthyType ty
       falseTy = falsyType ty
 
@@ -570,13 +575,13 @@ branchEnv initialEnv (TInfixExpression _ left Equal right _) =
     (TIdentifierLit _ _ lTy, TNullLit _ _) ->
       let truthEnv = Just (narrowEnv initialEnv left NullT)
           falsyEnv = case bindingNullType lTy of
-            Just (Binding narrowed _) -> Just (narrowEnv initialEnv left narrowed)
+            Just (Binding _ narrowed) -> Just (narrowEnv initialEnv left narrowed)
             Nothing -> Nothing
        in (truthEnv, falsyEnv)
     (TNullLit _ _, TIdentifierLit _ _ rTy) ->
       let truthEnv = Just (narrowEnv initialEnv right NullT)
           falsyEnv = case bindingNullType rTy of
-            Just (Binding narrowed _) -> Just (narrowEnv initialEnv right narrowed)
+            Just (Binding _ narrowed) -> Just (narrowEnv initialEnv right narrowed)
             Nothing -> Nothing
        in (truthEnv, falsyEnv)
     _ ->
@@ -590,13 +595,13 @@ branchEnv env (TInfixExpression _ left NotEqual right _) =
   case (left, right) of
     (TIdentifierLit _ _ lTy, TNullLit _ _) ->
       let truthEnv = case bindingNullType lTy of
-            Just (Binding narrowed _) -> Just (narrowEnv env left narrowed)
+            Just (Binding _ narrowed) -> Just (narrowEnv env left narrowed)
             Nothing -> Nothing
           falsyEnv = Just (narrowEnv env left NullT)
        in (truthEnv, falsyEnv)
     (TNullLit _ _, TIdentifierLit _ _ rTy) ->
       let truthEnv = case bindingNullType rTy of
-            Just (Binding narrowed _) -> Just (narrowEnv env right narrowed)
+            Just (Binding _ narrowed) -> Just (narrowEnv env right narrowed)
             Nothing -> Nothing
           falsyEnv = Just (narrowEnv env right NullT)
        in (truthEnv, falsyEnv)
@@ -607,7 +612,7 @@ branchEnv env (TInfixExpression _ left NotEqual right _) =
 branchEnv env (TCallExpression _ (TIdentifierLit _ "isStruct" _) [TIdentifierLit _ structName _, var@(TIdentifierLit _ varName varTy)] _) =
   let structTy = StructT structName
    in case lookupVar varName env of
-        Just (Binding currentTy currentPer) -> case intersectType currentTy structTy of
+        Just (Binding currentPer currentTy) -> case intersectType currentTy structTy of
           Nothing -> (Nothing, Just env) -- always false
           Just _ ->
             let truthEnv = Just (narrowEnv env var structTy)
@@ -616,11 +621,11 @@ branchEnv env (TCallExpression _ (TIdentifierLit _ "isStruct" _) [TIdentifierLit
                   Nothing -> Nothing
              in (truthEnv, falsyEnv)
         Nothing -> error ("Lookup on undefined variable " ++ varName)
-branchEnv env (TCallExpression _ (TIdentifierLit _ name _) [var@(TIdentifierLit _ varName (Binding varTy per))] _) =
+branchEnv env (TCallExpression _ (TIdentifierLit _ name _) [var@(TIdentifierLit _ varName (Binding per varTy))] _) =
   case Map.lookup name assertMap of
     Just assertedTy -> do
       case lookupVar varName env of
-        Just (Binding currentVarTy currentPer) -> case intersectType currentVarTy assertedTy of
+        Just (Binding currentPer currentVarTy) -> case intersectType currentVarTy assertedTy of
           Nothing -> (Nothing, Just env) -- always false
           Just narrowed ->
             let truthEnv = Just (narrowEnv env var narrowed)
@@ -679,8 +684,8 @@ removeNullType :: Type -> Maybe Type
 removeNullType = removeType NullT
 
 bindingNullType :: Binding -> Maybe Binding
-bindingNullType (Binding ty mut) =
-  fmap (\newTy -> Binding newTy mut) (removeNullType ty)
+bindingNullType (Binding mut ty) =
+  fmap (\newTy -> Binding mut newTy) (removeNullType ty)
 
 --
 --

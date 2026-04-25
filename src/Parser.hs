@@ -2,7 +2,7 @@
 
 module Parser where
 
-import Ast (Binding (..), Expression (..), FieldDecl (..), FieldInitialization (..), Param (..), Precedence (..), Statement (..), infixToPrecedence)
+import Ast (Expression (..), FieldDecl (..), FieldInitialization (..), Param (..), Precedence (..), Statement (..), infixToPrecedence)
 import Control.Applicative (Alternative (..))
 import Control.Lens
 import Data.Char (GeneralCategory (LowercaseLetter))
@@ -105,11 +105,19 @@ parseIdentifierExpression =
 
 parseParam :: AstParser Param
 parseParam =
-  expressionToParam <$> (maybe Immutable mutFromToken <$> optional (isToken Mut)) <*> parseIdentifierExpression <*> (maybe AnyT id <$> optional parseTypeHint)
+  expressionToParam <$> parseMutability <*> parseIdentifierExpression <*> (maybe AnyT id <$> optional parseTypeHint)
+
+parseTypeBinding :: AstParser Binding
+parseTypeBinding = Binding <$> parseMutability <*> parseType
+
+parseMutability :: AstParser Mutability
+parseMutability = (maybe Immutable mutFromToken <$> optional (isToken Mut))
   where
     mutFromToken :: Token -> Mutability
     mutFromToken (Token Mut _) = Mutable
     mutFromToken _ = Immutable
+
+-- parseRawParam :: AstParser Expression
 
 expressionToParam :: Mutability -> Expression -> Type -> Param
 expressionToParam per (IdentifierLit tok name) ty = Param {paramToken = tok, paramName = name, paramType = ty, paramMut = per}
@@ -389,13 +397,25 @@ parseAssignmentStatement = do
   return (AssignmentStatement (getToken identifier) identifier expr)
 
 parseTypeHint :: AstParser Type
-parseTypeHint = do
-  _ <- isToken Colon
+parseTypeHint = isToken Colon *> parseType
+
+parseType :: AstParser Type
+parseType =
   choice
     [ parseUnionExplicit, -- Try union with |
       parseUnion, -- Try Union[...]
+      parseFunctionType,
       parseBaseType -- Fall back to single type
     ]
+
+parseFunctionType :: AstParser Type
+parseFunctionType = do
+  _ <- isToken Fn
+  _ <- isToken LBracket
+  args <- sepBy parseTypeBinding (isToken Comma)
+  _ <- isToken RBracket
+  ret <- parseType
+  pure (FnT args ret)
 
 parseBaseType :: AstParser Type
 parseBaseType = choice [parseNative, parseUnresolvedStruct]
@@ -405,8 +425,9 @@ parseUnions = choice [parseUnion, parseUnionExplicit]
 
 parseUnion :: AstParser Type
 parseUnion = do
-  typeList <- sepBy parseBaseType (isToken Pipe)
-  return (simplifyRetTy typeList)
+  firstTy <- parseBaseType
+  rest <- zeroOrMore (isToken Pipe *> parseBaseType)
+  return (simplifyRetTy (firstTy : rest))
 
 parseUnionExplicit :: AstParser Type
 parseUnionExplicit = do

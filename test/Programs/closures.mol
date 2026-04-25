@@ -1,6 +1,6 @@
 let makeCounter = fn(start) {
   return fn() { return start; }
 };
-let c1 = makeCounter(10);
-let c2 = makeCounter(20);
+let c1 : Fn [Int] Int = makeCounter(10);
+let c2 : Fn [Void] Int = makeCounter(20);
 c1() + c2();

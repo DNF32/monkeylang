@@ -313,7 +313,7 @@ instance HasType TExpression where
     TStringLit {ty = t} -> t
     TBoolLit {ty = t} -> t
     TNullLit {ty = t} -> t
-    TIdentifierLit {tBinding = Binding t _} -> t
+    TIdentifierLit {tBinding = Binding _ t} -> t
     TPrefixExpression {ty = t} -> t
     TInfixExpression {ty = t} -> t
     TFunctionLit {ty = t} -> t

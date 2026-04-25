@@ -77,6 +77,7 @@ data TokenType
   | Mut
   | Pipe
   | And
+  | Fn
   | Or
   | Null
   | Escaped Char -- Keep?: depends on what this is for
@@ -274,6 +275,7 @@ keywords =
     ("Float", FloatType),
     ("Void", VoidType), -- missing!
     ("Union", Union),
+    ("Fn", Fn),
     ("Struct", StructType),
     ("mut", Mut)
   ]
