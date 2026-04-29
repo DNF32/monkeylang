@@ -52,16 +52,15 @@ defineVar name obj env =
     (scope : rest) -> env {identEnv = Map.insert name obj scope : rest}
 
 assignVar :: String -> Object -> Enviroment -> Maybe Enviroment
-assignVar name obj env = go (identEnv env)
+assignVar name obj env =
+  (\scopes -> env {identEnv = scopes}) <$> go (identEnv env)
   where
     go [] = Nothing
     go (scope : rest)
       | Map.member name scope =
-          Just env {identEnv = Map.insert name obj scope : rest}
+          Just (Map.insert name obj scope : rest)
       | otherwise =
-          case go rest of
-            Just updatedEnv -> Just updatedEnv
-            Nothing -> Nothing
+          (scope :) <$> go rest
 
 type Eval a = State Enviroment a
 
@@ -224,6 +223,7 @@ evalProgram' [s] = case s of
   LetStatement {} -> evalLetStatement s
   ReturnStatement {} -> evalReturnStatement s
   AssignmentStatement {} -> evalAssignmentStatement s
+  WhileStatement {} -> evalWhileStatement s
   ExpressionStatement {} -> do
     obj <- evalExpressionStatement s
     case obj of
@@ -237,7 +237,17 @@ evalProgram' (s1 : ss) = do
       _ <- evalLetStatement s1
       evalProgram' ss
     ReturnStatement {} -> evalReturnStatement s1
-    AssignmentStatement {} -> evalAssignmentStatement s1
+    AssignmentStatement {} -> do
+      obj <- evalAssignmentStatement s1
+      case obj of
+        ErrorObj _ -> return obj
+        _ -> evalProgram' ss
+    WhileStatement {} -> do
+      obj <- evalWhileStatement s1
+      case obj of
+        ReturnObj wrappedValue -> return wrappedValue
+        ErrorObj _ -> return obj
+        _ -> evalProgram' ss
     ExpressionStatement {} -> do
       obj <- evalExpressionStatement s1
       case obj of
@@ -247,31 +257,43 @@ evalProgram' (s1 : ss) = do
     StructDecl {} -> evalProgram' ss
     _ -> return voidObj
 
-evalBlockStatement :: [Statement] -> Eval Object
-evalBlockStatement [] = return voidObj
-evalBlockStatement [s] = case s of
-  LetStatement {} -> evalLetStatement s
-  ReturnStatement {} -> evalReturnStatement s
+evalBlockStatement' :: [Statement] -> Eval Object
+evalBlockStatement' [] = return voidObj
+evalBlockStatement' (s : ss) = case s of
+  LetStatement {} -> do
+    _ <- evalLetStatement s
+    evalBlockStatement' ss
+  ReturnStatement {} ->
+    evalReturnStatement s
+  AssignmentStatement {} -> do
+    obj <- evalAssignmentStatement s
+    case obj of
+      ErrorObj _ -> return obj
+      _ -> evalBlockStatement' ss
+  WhileStatement {} -> do
+    obj <- evalWhileStatement s
+    case obj of
+      ReturnObj _ -> return obj
+      ErrorObj _ -> return obj
+      _ -> evalBlockStatement' ss
   ExpressionStatement {} -> do
     obj <- evalExpressionStatement s
     case obj of
       ReturnObj _ -> return obj
       ErrorObj _ -> return obj
-      _ -> return obj
+      _ -> evalBlockStatement' ss
   _ -> return voidObj
-evalBlockStatement (s1 : ss) = do
-  case s1 of
-    LetStatement {} -> do
-      _ <- evalLetStatement s1
-      evalBlockStatement ss
-    ReturnStatement {} -> evalReturnStatement s1
-    ExpressionStatement {} -> do
-      obj <- evalExpressionStatement s1
-      case obj of
-        ReturnObj _ -> return obj
-        ErrorObj _ -> return obj
-        _ -> evalBlockStatement ss
-    _ -> return voidObj
+
+evalBlockStatement :: [Statement] -> Eval Object
+evalBlockStatement s = do
+  baseEnv <- get
+  let newEnv = pushScope baseEnv
+  put newEnv
+  obj <- evalBlockStatement' s
+  newEnv' <- get
+  let outputEnv = popScope newEnv'
+  put outputEnv
+  return obj
 
 evalLetStatement :: Statement -> Eval Object
 evalLetStatement (LetStatement _ (IdentifierLit _ name) value _ _) = do
@@ -296,6 +318,23 @@ evalAssignmentStatement (AssignmentStatement tok (IdentifierLit _ name) value) =
     FunctionObj {} -> return (ErrorObj (InvalidValueInAssigmentStamtment "Got Function object on the right hand side of assignment statement" $ Just $ getPos tok))
     _ -> do
       assignObject name obj
+
+evalWhileStatement :: Statement -> Eval Object
+evalWhileStatement (WhileStatement _ condition body) = loop
+  where
+    loop = do
+      conditionObj <- evalExpression condition
+      case conditionObj of
+        ErrorObj _ -> return conditionObj
+        _ ->
+          case isTruthy conditionObj of
+            True -> do
+              bodyResult <- evalBlockStatement body
+              case bodyResult of
+                ReturnObj _ -> return bodyResult
+                ErrorObj _ -> return bodyResult
+                _ -> loop
+            False -> return voidObj
 
 evalReturnStatement :: Statement -> Eval Object
 evalReturnStatement (ReturnStatement _ expr) = do

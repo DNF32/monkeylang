@@ -504,6 +504,12 @@ statementTypeChecker (AssignmentStatement tok (IdentifierLit tok' name) expr) = 
 statementTypeChecker (ExpressionStatement tok expr) = do
   typedExpr <- typeCheck expr
   return (TExpressionStatement tok typedExpr)
+statementTypeChecker (WhileStatement tok condition body) = do
+  tCondition <- typeCheck condition
+  tBody <- statementTypeChecker (BlockStatement body)
+  case tBody of
+    TBlockStatement tStmts -> return (TWhileStatement tok tCondition tStmts)
+    _ -> error "Run statementTypeChecker on BlockStatement and got non TBlockStatement"
 statementTypeChecker (BlockStatement stmts) = do
   modify pushScope
   tStmts <- go stmts

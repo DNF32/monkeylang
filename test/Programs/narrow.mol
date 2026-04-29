@@ -1,0 +1,7 @@
+let x : Union[String,Int,Null] = Null;
+
+if (x!=Null){
+   let y: Null = x;
+}else{
+   let y: Int = 10;
+}

@@ -267,6 +267,18 @@ parseFunctionLiteral = do
       return $ FunctionLit fn parameters returnType stmts'
     _ -> error "parseBlockStatement should always return BlockStatement"
 
+parseWhileLoop :: AstParser Statement
+parseWhileLoop = do
+  tok <- isToken While
+  expr <- parseGroupExpression
+  _ <- isToken LBrace
+  stmts <- parseBlockStatement
+  _ <- isToken RBrace
+  case stmts of
+    BlockStatement stmts' ->
+      return $ WhileStatement tok expr stmts'
+    _ -> error "parseBlockStatement should always return BlockStatement"
+
 parseIndexExpression :: Expression -> AstParser Expression
 parseIndexExpression left = do
   tok <- isToken LBracket
@@ -526,6 +538,7 @@ parseStatement endToken = do
    in case tt of
         Let -> fmap Just parseLetStatement
         Return -> fmap Just parseReturnStatement
+        While -> fmap Just parseWhileLoop
         StructType -> fmap Just parseStructDecl
         _ | tt == endToken -> pure Nothing
         _ -> case getTokenType ppTok of
@@ -535,13 +548,16 @@ parseStatement endToken = do
 parseStatementInScope :: TokenType -> AstParser (Maybe Statement)
 parseStatementInScope endToken = do
   pTok <- peekToken
+  ppTok <- peekTwoAheadToken
   case pTok of
     tok@(Token tt _) -> do
       case tt of
         Let -> fmap Just parseLetStatement
         Return -> fmap Just parseReturnStatement
         _ | tt == endToken -> pure Nothing
-        _ -> fmap Just (parseExpressionStatement tok)
+        _ -> case getTokenType ppTok of
+          Assign -> fmap Just parseAssignmentStatement
+          _ -> fmap Just (parseExpressionStatement tok)
 
 parseProgram :: AstParser Statement
 parseProgram = Program <$> parseStatementsUntil parseStatement EOF

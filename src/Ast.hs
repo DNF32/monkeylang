@@ -117,6 +117,7 @@ data Statement
   | ReturnStatement {stmtToken :: Token, result :: Expression}
   | ExpressionStatement {stmtToken :: Token, expr :: Expression}
   | BlockStatement {statements :: [Statement]}
+  | WhileStatement {stmtToken :: Token, conditon :: Expression, statements :: [Statement]}
   | StructDecl {stmtToken :: Token, structName :: String, fields :: [FieldDecl]}
   deriving (Eq, Show)
 
@@ -347,6 +348,7 @@ data TStatement
   | TReturnStatement {tReturnToken :: Token, tResult :: TExpression}
   | TExpressionStatement {tStmtToken :: Token, tExpr :: TExpression}
   | TBlockStatement {tBlockStatements :: [TStatement]}
+  | TWhileStatement {stmtToken :: Token, tConditon :: TExpression, tStatements :: [TStatement]}
   | TStructDecl {tStmtToken :: Token, structName :: String, fields :: [FieldDecl]}
   deriving (Eq, Show)
 
