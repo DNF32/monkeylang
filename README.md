@@ -1,17 +1,20 @@
 # monkeyLang
 
-A small experimental programming language implemented in Haskell.
+`monkeyLang` is a small statically checked programming language implemented in Haskell.
 
-`monkeyLang` currently includes:
-- a lexer and Pratt parser
-- an interpreter
-- a static typechecker
-- source-positioned error reporting
-- tests for tokenizing, parsing, evaluation, and typechecking
+I built this project to explore language implementation and static analysis from the ground up: lexing, parsing, evaluation, scope handling, and type checking.
 
-## Language features
+## What it includes
 
-Current supported features include:
+- hand-written lexer
+- Pratt parser
+- tree-walking interpreter
+- static typechecker
+- source-positioned diagnostics
+- automated tests for lexer, parser, evaluator, and typechecker
+
+## Current language features
+
 - `let` bindings
 - mutable bindings with `mut`
 - `return`
@@ -21,12 +24,20 @@ Current supported features include:
 - integers, floats, strings, booleans, and `Null`
 - arrays and indexing
 - structs and field access
-- union types and basic flow-sensitive narrowing
+- union types
+- basic flow-sensitive type narrowing
 
-See:
-- `docs/semantics.md`
-- `docs/roadmap.md`
-- `test/Programs/`
+## Project structure
+
+- `src/Token.hs` — lexer, tokens, and position tracking
+- `src/Parser.hs` — parser
+- `src/Eval.hs` — interpreter
+- `src/TypeChecker.hs` — typechecker
+- `src/Ast.hs` — AST definitions
+- `src/SimpleParser.hs` — parser combinator core
+- `docs/semantics.md` — language behavior notes
+- `docs/roadmap.md` — planned work
+- `test/Programs/` — sample programs
 
 ## Build
 
@@ -50,7 +61,7 @@ cabal run monkeyLang -- --check path/to/program.mol
 
 ## Test
 
-Run all tests:
+Run everything:
 
 ```bash
 cabal test
@@ -82,6 +93,6 @@ let p2 = Point{x: 3; y: 4};
 addPoint(p1, p2);
 ```
 
-## Status
+## Notes
 
-This is an active personal language project and the implementation is still evolving. Expect rough edges, incomplete features, and breaking changes.
+This is an active personal project, not a finished language release. The implementation is still evolving, and some semantics and syntax may change as the typechecker and runtime grow.
